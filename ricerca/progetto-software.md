@@ -64,7 +64,11 @@ motore/
   validazione/   statistiche e controlli contro il sovra-adattamento
   portafoglio/   unione delle liste dei trade, calendario dell'esposizione, drawdown comuni (cantiere 4)
   uscita/        traduzione in ProRealCode con la console e gli interruttori standard
+  cli            comandi per l'IA: accoda, lancia, stato, riassunto JSON, confronto
+  coda           esecuzione notturna degli esperimenti, ripresa dopo interruzione, rapporto del mattino
+cruscotto/       pagine HTML locali per Andrea: rapporto del mattino, elenco filtrabile dei candidati, schede e curve
 esperimenti/     un file per ogni idea: ipotesi, meccanismo, fonte, direzione attesa, scritto prima di lanciare; i risultati si aggiungono sotto
+risultati/       uscite degli esperimenti (fuori da git se pesanti): JSON per l'IA, curve e trade per il cruscotto
 ```
 
 ### Perché tre motori
@@ -82,9 +86,28 @@ Python con polars e numpy per dati, mappe e tabelle degli eventi; numba 0.68 (in
 
 Il motore è lo stesso; cambia il file dell'esperimento, che dichiara il modo e quindi quanto severa è la correzione per il numero di prove.
 
-### Coda di lavoro
+### Chi usa il software
 
-Il PC può restare acceso a calcolare: gli esperimenti vanno in una coda (`esperimenti/coda/`), un programma li esegue uno dopo l'altro e scrive per ognuno un riassunto breve con i numeri chiave e i grafici. Io leggo i riassunti, non i dati grezzi: costa pochi token e lascia ad Andrea i risultati da guardare in qualunque momento.
+Il software lo usa l'IA; Andrea guarda i risultati. Il flusso:
+1. Andrea propone in chat un'idea o una ricerca mirata ("long sul DAX", "questa logica su tutti i prodotti").
+2. Insieme si precisa l'idea; l'IA scrive il file dell'esperimento (ipotesi, meccanismo, prodotti, griglia, modo in ampiezza o in verticale, budget di prove dalla MinBTL) e lo mette in coda.
+3. Il PC lavora tutta la notte senza l'IA collegata.
+4. Al mattino Andrea trova i **10 migliori sistemi già filtrati** dalle regole di validazione, ciascuno con la scheda, la curva e il codice ProRealCode pronto per la sua verifica.
+
+Ne seguono due interfacce distinte.
+
+**Interfaccia per l'IA** (`motore/cli` e file in `esperimenti/`), pensata per costare pochi token:
+- comandi brevi: lancia o accoda un esperimento, stato della coda, riassunto di un esperimento, confronta candidati;
+- ogni risultato esce in due forme: un riassunto compatto in JSON (poche righe di numeri, quello che l'IA legge) e i file completi per il cruscotto (curve, liste dei trade, tabelle), che l'IA non apre;
+- le specifiche degli esperimenti sono file di testo validati dal software (campi obbligatori, budget di prove, date dello schema in-sample/out-of-sample fissate), così l'IA non può lanciare una ricerca che viola le regole di validazione o tocca il fuori campione.
+
+**Coda notturna.** Un programma esegue gli esperimenti in coda uno dopo l'altro, sfruttando i 12 thread, con salvataggi intermedi per riprendere dopo un'interruzione, il PC tenuto sveglio durante il lavoro e un registro degli errori. A fine coda scrive il **rapporto del mattino**: i 10 candidati migliori di tutta la notte, già passati dalle regole di selezione, ordinati secondo la scheda e con la sovrapposizione dei drawdown rispetto ai sistemi in produzione.
+
+**Cruscotto per Andrea** (`cruscotto/`): pagine HTML locali generate dal software, che si aprono nel browser senza server e senza installare niente:
+- il rapporto del mattino;
+- un elenco di tutti i candidati di tutte le ricerche, filtrabile e ordinabile per prodotto, lato, tipo di vantaggio, esperimento, data e per ogni metrica della scheda;
+- per ogni candidato la curva dei profitti (in-sample, holdout interni e Monte Carlo a bande), la scheda, la curva per anno e per regime, la lista dei trade, il confronto con i sistemi in produzione e il file ProRealCode da scaricare;
+- un registro delle verifiche su ProRealTime, dove segnare l'esito del fuori campione di ogni candidato provato, che diventa un dato per tarare le soglie del software.
 
 ## Metriche oltre a quelle di ProRealTime
 
@@ -141,9 +164,12 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 3 | `catalogo` (orari, costi, gemelli) e `motori/mappa`; taratura su AUDJPY e DAX | |
 | 4 | `metriche` e `validazione` (delegabile con specifica) | |
 | 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | |
-| 6 | `motori/backtest` con numba e coda di lavoro | |
-| 7 | primi esperimenti: setaccio e trapianti dei modelli 128 e 185 | |
+| 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | |
+| 7 | `coda` notturna e rapporto del mattino; primi esperimenti: setaccio e trapianti dei modelli 128 e 185 | |
 | 8 | `uscita` verso ProRealCode e `portafoglio` (delegabili) | |
+| 9 | `cruscotto` HTML per Andrea (delegabile con specifica) | |
+
+Dalla fase 3 ogni modulo nuovo espone già le sue funzioni alla `cli` e scrive il riassunto JSON, così l'interfaccia per l'IA cresce insieme al motore invece di essere aggiunta alla fine.
 
 **Note sui dati emerse nella fase 1**: l'FDAX ha la sessione notturna Eurex dalla fine del 2018 (prima apriva alle 08:00 italiane); i cross contro yen si costruiscono con scala 100 (JY è quotato in dollari per 100 yen).
 
