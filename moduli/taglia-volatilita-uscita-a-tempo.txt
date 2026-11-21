@@ -1,0 +1,26 @@
+// MODULO: taglia inversamente proporzionale alla volatilità, solo per le posizioni
+//         che escono a tempo con uno stop lontano
+// Validato su: 128 BIAS HOUR AUDJPY 1H (M8), short 2015-2026: drawdown da -159.050 ¥
+//              a -119.791 ¥, profitto da 1,37 a 1,46 M ¥, stessi 393 trade.
+// Non usarlo su posizioni con stop stretto: lì la perdita è già fissata dallo stop e
+// la stessa logica ha peggiorato il drawdown (M2).
+// Non usarlo nemmeno quando il guadagno per trade cresce con la volatilità: su 165 DAX
+// lo short guadagnava 31 € a trade nei periodi agitati e 7 € in quelli calmi (M5), e
+// ridurre la taglia nei periodi agitati avrebbe tolto i trade migliori.
+// Richiede: PsS (o la taglia del lato che esce a tempo), timeframe 1 ora.
+// Produce:  FattoreVol; moltiplica PsS. Serve DEFPARAM PreLoadBars = 3000.
+
+BarreVolBreve  = 120      // circa 1 settimana di barre orarie
+BarreVolLunga  = 2000     // circa 4 mesi di barre orarie
+FattoreMinVol  = 0.5
+FattoreMaxVol  = 1.5
+
+VolBreve = AverageTrueRange[BarreVolBreve](close)
+VolLunga = AverageTrueRange[BarreVolLunga](close)
+
+FattoreVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreVol = max(FattoreMinVol, min(FattoreMaxVol, VolLunga / VolBreve))
+ENDIF
+
+PsS = PsS * FattoreVol

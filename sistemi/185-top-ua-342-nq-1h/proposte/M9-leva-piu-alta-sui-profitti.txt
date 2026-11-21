@@ -1,0 +1,209 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 NQ 1H  |  MODULO M9  (terza proposta di taglia, sopra C0)
+// Leva più alta sui profitti che sul capitale versato, con un tetto che scende quando
+// la posizione è diventata grande
+//
+// Da dove viene. M8 (leva 1,5 su tutto il capitale) ha portato 5.000 € a 213.000 € in
+// dieci anni, circa il 46% l'anno, ma i contratti crescono solo del 22% l'anno perché
+// l'indice sale anche lui. Andrea vuole partire con circa 1,5 contratti e arrivare a 2,5,
+// 4 e 6 nei tre anni successivi se il sistema guadagna, poi assestarsi, accettando un
+// drawdown del 20-25%. Moltiplicare i contratti per 1,6 l'anno richiede una leva di circa
+// 2,6-2,7 sul capitale. Qui la leva sale con i profitti: sui soldi versati resta 1,5,
+// sui profitti è 4, come il rischio sui profitti più alto di quello sul capitale
+// dell'originale (RiskOnProfit 18 contro RiskOnCapital 4).
+//
+// Come cresce la leva effettiva (valore della posizione long / capitale attuale):
+//   capitale = versato         1,5
+//   capitale = 1,5 × versato   2,3
+//   capitale = 2 × versato     2,75
+//   capitale = 3 × versato     3,0 (tetto)
+//   da 4 a 10 × versato        il tetto scende da 3 a 2
+// Lo short ha in più PesoShort 1,65, che pareggia i drawdown dei due lati.
+// Se il capitale scende sotto quanto versato, la leva torna 1,5 sul capitale rimasto.
+//
+// Rischio. A valore fisso il drawdown massimo del long è stato l'11% del valore della
+// posizione: con leva 3 vuol dire fino a circa il 33% del capitale, se il drawdown
+// peggiore capita quando la leva è al tetto. È più di quanto Andrea accetta; la variante
+// con il freno lo limita. Il backtest dice dove cade davvero: la riga GRAPH "drawdown %"
+// va letta nel suo punto più basso.
+//
+// Varianti:
+//   LevaProfitti 4, LevaMaxInizio 3 (proposta)
+//   LevaProfitti 3, LevaMaxInizio 2.5 (più prudente)
+//   UsaFreno = 1 nell'intestazione con MaxDD 0.30 e FrenoMinimo 0.5: posizione dimezzata
+//   quando il capitale scende del 30% dal massimo
+//   LevaProfitti 1.5, LevaMaxInizio 99, PesoShort 1.65: riproduce M8
+// Come provarlo: Reinvesti = 1; con Reinvesti = 0 la posizione vale Leva × Capitale fissa.
+// (Prima versione, 2026-11-21: l'interruttore era UsaM9 e Reinvesti = 0 non spegneva il
+// reinvestimento; corretto.)
+// Come giudicarlo: drawdown % massimo (riga GRAPH), capitale finale, contratti nel
+// tempo (riga GRAPH "contratti long") e regolarità degli anni.
+// Il reale. Con 1,5 contratti e l'indice a 28.000 la posizione vale 42.000 €: per
+// partire a leva 1,5 servono 28.000 € versati. Con 5.000 € la partenza a leva 1,5 vale
+// 0,27 contratti e scatta il minimo di 0,5 (leva 2,8 per lato, come oggi l'originale).
+// Il finanziamento notturno, che il backtest non conta, cresce con la leva.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (US Tech 100 Cash da 1 €, valuta di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 1        // 1 = la posizione cresce con i profitti (leve sotto); 0 = valore fisso Leva × Capitale
+Leva                = 1.5      // valore della posizione / capitale versato
+LevaProfitti        = 4        // con Reinvesti = 1: valore della posizione / profitti realizzati
+LevaMaxInizio       = 3        // tetto alla leva effettiva (valore della posizione / capitale attuale)
+LevaMaxFine         = 2        // tetto quando il capitale è MultiploFine volte il versato
+MultiploInizio      = 4        // capitale / versato da cui il tetto comincia a scendere
+MultiploFine        = 10
+ContrattiFissi      = 0        // > 0: contratti fissi a peso 1, le leve non contano
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1.65     // moltiplicatore della posizione short: pareggia i drawdown dei due lati
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // valore di 1 punto per 1 contratto (US Tech 100 Cash 1 € -> 1)
+//
+// Leva effettiva con Reinvesti = 1: 1,5 con il capitale versato, 2,3 quando il capitale
+// è 1,5 volte il versato, 2,75 al doppio, 3 (tetto) al triplo; tra 4 e 10 volte il
+// versato il tetto scende da 3 a 2. Sotto il versato torna 1,5 sul capitale rimasto.
+// Con l'indice a 28.000 servono circa 9.300 € perché il long superi il minimo di 0,5
+// contratti; sotto quella cifra il minimo impone una leva più alta.
+//=========================================================================
+
+// --- Parametri della strategia
+EntraLong     = 1
+EntraShort    = 1
+
+MySLL         = 4          // stop long, % del prezzo
+MySLS         = 4          // stop short
+MyTPL         = 2.5        // target long
+MyTPS         = 1.6        // target short
+
+MyStartTradeL = 080000
+MyEndTradeL   = 200000
+MyStartTradeS = 160000
+MyEndTradeS   = 200000
+PortATRMeno   = 4          // calo minimo dall'apertura della giornata, in escursioni medie orarie
+BarreUscitaL  = 90
+BarreUscitaS  = 100
+MaxDayInTradeL = 8          // giorni in posizione (contati come nell'originale)
+MaxDayInTradeS = 4
+ONCE DayInTrade = 0
+
+// --- Capitale attuale, freno e posizioni
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   Profitti = ProfittoPrecedente + StrategyProfit
+   IF Profitti > 0 THEN
+      ValoreBase = Leva * Capitale + LevaProfitti * Profitti
+   ELSE
+      ValoreBase = Leva * (Capitale + Profitti)
+   ENDIF
+   Multiplo = CapitaleAttuale / Capitale
+   LevaMax = LevaMaxInizio
+   IF Multiplo > MultiploInizio THEN
+      LevaMax = LevaMaxInizio - (LevaMaxInizio - LevaMaxFine) * min(1, (Multiplo - MultiploInizio) / (MultiploFine - MultiploInizio))
+   ENDIF
+   ValoreBase = max(0, min(ValoreBase, LevaMax * CapitaleAttuale))
+ELSE
+   ValoreBase = Leva * Capitale
+ENDIF
+LevaEffettiva = ValoreBase / CapitaleAttuale
+
+IF ContrattiFissi > 0 THEN
+   ContrattiBase = ContrattiFissi
+ELSE
+   ContrattiBase = ValoreBase / (close * ValorePerPunto)
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Segnali
+GiornoLong = dayofweek = 1
+
+shortAvg  = Average[5](close)
+shortAvg2 = Average[10](close)
+iptn18    = shortAvg crosses over shortAvg2 and close > (shortAvg * 0.99)
+
+uptn116    = (dhigh(1) - dclose(1)) < 0.20 * (dhigh(1) - dlow(1))
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[20](close)
+
+// --- Ingressi
+IF time >= MyStartTradeL AND time <= MyEndTradeL THEN
+   IF EntraLong AND iptn18 AND GiornoLong THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+ENDIF
+
+IF time >= MyStartTradeS AND time <= MyEndTradeS THEN
+   IF EntraShort AND MyTriggerS AND uptn116 THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Uscite
+// giorni in posizione, come l'originale: il contatore riparte solo quando si passa da
+// fuori a dentro il mercato, quindi uno short che inverte un long eredita i giorni del long
+IF OnMarket <> OnMarket[1] THEN
+   DayInTrade = 0
+ENDIF
+IF OnMarket AND (Day > Day[1] OR (DayInTrade > 3 AND DayOfWeek < 1)) THEN
+   DayInTrade = DayInTrade + 1
+ENDIF
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL AND MaxDayInTradeL > 0 THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS AND MaxDayInTradeS > 0 THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+FineSettimana = dayofweek = 5 AND time = 210000
+
+IF LongOnMarket AND (barindex - tradeindex > BarreUscitaL OR FineSettimana) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (barindex - tradeindex > BarreUscitaS OR FineSettimana) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+DrawdownPerc = 100 * (1 - CapitaleAttuale / PiccoCapitale)
+GRAPH DrawdownPerc AS "drawdown %"
+GRAPH LevaEffettiva AS "leva effettiva"
+GRAPH PsL AS "contratti long"

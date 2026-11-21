@@ -1,0 +1,154 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M6 (sopra C1 = originale + M5 sugli short)
+// Il long in guadagno alle 21:30 esce prima della notte
+//
+// Ipotesi. Il long tiene 18 ore e mezza: pomeriggio europeo e sessione americana
+// (13:30-21:30), poi la notte fino alle 08:00. Due risultati documentati dicono che la
+// notte dopo una giornata in salita rende poco:
+// - il momento intraday si inverte in parte nei giorni successivi (Baltussen et al. 2021,
+//   oltre 60 futures);
+// - sui futures americani il rialzo notturno è stato forte dopo le giornate di vendite e
+//   modesto dopo i rialzi (Boyarchenko-Larsen-Whelan 2023), anche se dal 2021 il rialzo
+//   all'apertura europea è sparito.
+// In più M4 ha mostrato che il long non dipende dal movimento della mattina, quindi il
+// suo vantaggio potrebbe stare più nella notte che nel pomeriggio: questo test lo dice.
+// Con ModoM6 = 2 il long che alle 21:30 è sopra il prezzo d'ingresso esce subito; quello
+// in perdita resta aperto fino alle 08:00 come nell'originale, perché dopo una giornata
+// in discesa la notte dovrebbe rendere di più. Lo spread alle 21:30 è lo stesso delle
+// 08:00 (3,8 punti su IG); in più chi esce la sera non paga il finanziamento notturno,
+// circa 3,7 € a contratto con il DAX a 26.700, che il backtest non conteggia.
+// Direzione attesa con ModoM6 = 2: guadagno medio del long uguale o più alto, drawdown e
+// perdita peggiore uguali o più bassi.
+// UsaM6 = 0 riproduce C1 con Reinvest = 0.
+//
+// Come provarlo: Reinvest = 0 (già impostato), report delle sole posizioni long; il
+// riferimento è C1 con Reinvest = 0 (un solo backtest, vale anche per M7 e M9).
+// Lanciare ModoM6 = 2 (proposta); se c'è tempo anche 1 e 3, che servono a capire dove
+// guadagna il long. Il numero di trade non cambia, quindi le differenze sono esatte:
+//   C1 - Modo 1 = quanto rende la notte di tutti i long
+//   C1 - Modo 2 = quanto rende la notte dei long in guadagno alle 21:30
+//   C1 - Modo 3 = quanto rende la notte dei long in perdita alle 21:30
+// Se la notte dei long in guadagno rende meno del finanziamento (circa 1-4 € a notte a
+// seconda degli anni), M6 è un miglioramento anche a profitto invariato.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+UsaM6 = 1                 // 0 = C1, 1 = modulo attivo
+ModoM6 = 2                // 1 = tutti i long escono alle 21:30
+                          // 2 = escono alle 21:30 solo i long in guadagno (proposta)
+                          // 3 = escono alle 21:30 solo i long in perdita
+OraSera = 213000          // barra che chiude alle 21:30: l'uscita avviene alle 21:30
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+
+// --- M5: regime di volatilità per lo short (barre giornaliere chiuse)
+SogliaVolS = 1.0
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 0    // PER IL TEST (originale: 1)
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+// --- M6: uscita serale del long
+EsciSera = 0
+IF UsaM6 = 1 AND LongOnMarket AND time = OraSera THEN
+   IF ModoM6 = 1 THEN
+      EsciSera = 1
+   ELSIF ModoM6 = 2 AND close > PositionPrice THEN
+      EsciSera = 1
+   ELSIF ModoM6 = 3 AND close <= PositionPrice THEN
+      EsciSera = 1
+   ENDIF
+ENDIF
+
+If LongOnMarket AND (ExitL OR EsciSera) then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif

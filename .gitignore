@@ -1,0 +1,5 @@
+# dati di mercato (2,6 GB) e cache: restano solo in locale
+Dati/
+__pycache__/
+*.pyc
+.claude/settings.local.json

@@ -1,0 +1,179 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M7
+// Aggiunta di una seconda posizione sui long che hanno già guadagnato, a rischio invariato
+//
+// Dal report dei long: quasi tutte le perdite sono stop pieni (perdita media
+// 14.683 ¥ contro uno stop di circa 15.040 ¥), mentre i vincenti arrivano in media
+// a 2,8 volte lo stop restando aperti fino al mercoledì. È il profilo di una
+// settimana che o parte subito nella direzione giusta o viene fermata dallo stop.
+// Se è così, un long che a fine barra ha già guadagnato SogliaR volte la distanza
+// dello stop è più probabilmente una settimana buona, e aggiungere lì alza il
+// guadagno medio dei trade vincenti.
+// Dopo l'aggiunta lo stop dell'intera posizione sale al livello in cui la perdita
+// totale è pari a RischioDopoR volte la perdita a stop dell'originale (con 1 il
+// caso peggiore resta quello di oggi, a parte lo slittamento).
+// Tutto il resto è invariato; gli short non sono toccati.
+// UsaM7 = 0 riproduce esattamente l'originale con Reinvest = 0.
+// Fonti: Kaminski-Lo 2014, Lo-Remorov 2017 (stop e regimi persistenti).
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = True   // necessario per poter aggiungere al long
+
+UsaM7 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+// --- Parametri M7 (prova SogliaR 1 / 1.5 / 2 e RischioDopoR 1 / 1.5, non altri valori)
+SogliaR          = 1      // aggiungi quando il long guadagna SogliaR volte la distanza dello stop
+QuotaAggiunta    = 1      // taglia dell'aggiunta rispetto alla prima entrata
+RischioDopoR     = 1      // perdita massima della posizione dopo l'aggiunta, in perdite a stop originali
+BarreMaxAggiunta = 40     // aggiungi solo nelle prime 40 barre (entro martedì sera)
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000
+RiskOnCapital       = 0.15
+MaxPosition         = 80
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+PsL = RiskCapitalBase / ((close * (MySLL / 100)) * 3)
+PsS = RiskCapitalBase / (close * (MySLS / 100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+// --- M7: stato della posizione long
+// (TRADEINDEX dopo l'aggiunta indicherebbe la barra dell'aggiunta: per l'uscita
+// a 66 barre si usa la barra della prima entrata, salvata qui)
+IF LongOnMarket AND NOT LongOnMarket[1] THEN
+   PrezzoIngresso = PositionPrice
+   BarraIngresso  = BarIndex
+   TagliaIniziale = CountOfLongShares
+   Aggiunto       = 0
+ENDIF
+IF NOT LongOnMarket THEN
+   Aggiunto = 0
+ENDIF
+IF LongOnMarket AND CountOfLongShares > TagliaIniziale THEN
+   Aggiunto = 1
+ENDIF
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL AND NOT LongOnMarket then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS AND NOT ShortOnMarket then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+// --- M7: aggiunta (confermata a chiusura di barra, eseguita in apertura della successiva)
+IF UsaM7 = 1 AND LongOnMarket AND Aggiunto = 0 AND (BarIndex - BarraIngresso) <= BarreMaxAggiunta THEN
+   LivelloAggiunta = PrezzoIngresso * (1 + SogliaR * MySLL / 100)
+   IF close >= LivelloAggiunta THEN
+      PsAgg = max(1, TagliaIniziale * QuotaAggiunta)
+      buy PsAgg Lots at Market
+   ENDIF
+ENDIF
+
+// --- M7: stop dell'intera posizione dopo l'aggiunta
+// Livello a cui la perdita totale è RischioDopoR volte la perdita a stop della sola
+// prima entrata: prezzo medio - distanza stop * RischioDopoR * taglia iniziale / taglia totale.
+// Il SET STOP %LOSS resta attivo (ricalcolato sul prezzo medio) ma è più lontano.
+IF UsaM7 = 1 AND LongOnMarket AND Aggiunto = 1 THEN
+   DistStopIniziale  = PrezzoIngresso * MySLL / 100
+   LivelloProtezione = PositionPrice - DistStopIniziale * RischioDopoR * TagliaIniziale / CountOfLongShares
+   IF close > LivelloProtezione THEN
+      sell at LivelloProtezione stop
+   ELSE
+      sell at market
+   ENDIF
+ENDIF
+
+If longonmarket and barindex-BarraIngresso>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH CountOfLongShares AS "contratti long"
+GRAPH Aggiunto AS "aggiunta fatta"

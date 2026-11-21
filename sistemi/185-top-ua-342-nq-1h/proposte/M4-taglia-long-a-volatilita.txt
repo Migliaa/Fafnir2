@@ -1,0 +1,204 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 NQ 1H  |  MODULO M4
+// Taglia del long inversa alla volatilità recente
+//
+// Ipotesi. Il long resta aperto fino a quattro giorni con uno stop al 4% e un target al
+// 2,5%: quanto perde un trade, e quanto spesso arriva allo stop, dipende da quanto si
+// muove l'indice in quei giorni, cioè dalla volatilità. Lo stop limita la singola perdita
+// ma nei periodi agitati scatta più spesso, quindi la perdita media cresce con la
+// volatilità. Sullo short di 128 BIAS HOUR, che esce a tempo, dimensionare la taglia
+// sulla volatilità ha ridotto il drawdown del 25% senza togliere profitto (V3,
+// moduli/taglia-volatilita-uscita-a-tempo.txt). Sull'indice azionario USA ridurre
+// l'esposizione quando la volatilità è alta ha anche alzato il rapporto rendimento /
+// rischio (Moreira-Muir 2017; Harvey et al. 2018, netto proprio sulle azioni;
+// fonti/prodotti/nasdaq.md, A4). Qui la posizione è moltiplicata per
+//   volatilità di 5 mesi / volatilità di 2 settimane, tra FattoreMinM4 e FattoreMaxM4
+// (lo stesso rapporto di M3, rovesciato): metà posizione quando la volatilità recente è
+// doppia del normale, una volta e mezza quando è due terzi.
+// Direzione attesa sul long: drawdown più basso, profitto simile, profitto / drawdown
+// più alto. Va letto insieme a M3: se i long dei periodi agitati guadagnano molto più
+// degli altri, ridurli toglie i trade migliori, come sarebbe successo con gli short
+// del DAX. Su 128 BIAS HOUR, con uno stop stretto, la stessa regola ha peggiorato il
+// drawdown (M2): qui lo stop vale circa una volta e mezza il movimento di quattro giorni,
+// una via di mezzo.
+// Sullo short la direzione attesa è opposta (momento, rende nei periodi agitati):
+// ApplicaShortM4 = 1 è solo una variante di controllo.
+//
+// Varianti: VolBreve su 10 giorni (proposta) o su 5 (reazione più rapida);
+// ApplicaShortM4 = 1 per vedere l'effetto sullo short.
+// Come provarlo: UsaM4 = 1 e UsaM4 = 0 (riferimento comune a tutta la tornata),
+// report long (e short con la variante).
+// Come giudicarlo: stessi trade, cambia solo la taglia. Si confrontano drawdown e
+// profitto / drawdown, che non dipende dalla taglia media; il profitto da solo no,
+// perché la posizione media con M4 può essere un po' diversa da quella del riferimento.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (US Tech 100 Cash da 1 €, valuta di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // 1 = posizione proporzionale al capitale attuale; 0 = non cresce con i profitti
+Leva                = 6        // PER IL TEST: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 0        // con Reinvesti = 0: contratti a peso 1; 0 = valore fisso Leva × Capitale
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // PER IL TEST (originale: 2, cioè rischio dell'8% invece del 4%)
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // valore di 1 punto per 1 contratto (US Tech 100 Cash 1 € -> 1)
+//
+// PER IL TEST: 6 × 5.000 = posizione da 30.000 in ogni trade, circa 1 contratto ai
+// prezzi di oggi e 7 nel 2016, così ogni anno pesa allo stesso modo e il minimo di 0,5
+// contratti non scatta mai; un trade che arriva allo stop del 4% perde 1.200. Con
+// Reinvesti = 0 il capitale del backtest non entra nei calcoli: se ProRealTime ferma il
+// backtest per capitale insufficiente, alzalo.
+//=========================================================================
+
+// --- Parametri M4
+UsaM4          = 1             // 0 = originale, 1 = modulo attivo
+ApplicaLongM4  = 1
+ApplicaShortM4 = 0             // variante di controllo
+FattoreMinM4   = 0.5
+FattoreMaxM4   = 1.5
+
+// --- Parametri della strategia (come l'originale)
+EntraLong     = 1
+EntraShort    = 1
+
+MySLL         = 4          // stop long, % del prezzo
+MySLS         = 4          // stop short
+MyTPL         = 2.5        // target long
+MyTPS         = 1.6        // target short
+
+MyStartTradeL = 080000
+MyEndTradeL   = 200000
+MyStartTradeS = 160000
+MyEndTradeS   = 200000
+PortATRMeno   = 4          // calo minimo dall'apertura della giornata, in escursioni medie orarie
+BarreUscitaL  = 90
+BarreUscitaS  = 100
+MaxDayInTradeL = 8          // giorni in posizione (contati come nell'originale)
+MaxDayInTradeS = 4
+ONCE DayInTrade = 0
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)     // ultime 2 settimane (variante: 5)
+VolLunga = AverageTrueRange[100](close)    // ultimi 5 mesi circa
+TIMEFRAME(default)
+
+FattoreVol = 1
+IF UsaM4 = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreVol = max(FattoreMinM4, min(FattoreMaxM4, VolLunga / VolBreve))
+ENDIF
+
+// --- Capitale attuale, freno e posizioni (intestazione standard)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   IF ContrattiFissi > 0 THEN
+      ContrattiBase = ContrattiFissi
+   ELSE
+      ContrattiBase = Leva * Capitale / (close * ValorePerPunto)
+   ENDIF
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- M4: taglia legata alla volatilità
+IF ApplicaLongM4 = 1 THEN
+   PsL = max(MinContratti, min(MaxContratti, PsL * FattoreVol))
+ENDIF
+IF ApplicaShortM4 = 1 THEN
+   PsS = max(MinContratti, min(MaxContratti, PsS * FattoreVol))
+ENDIF
+
+// --- Segnali (come l'originale)
+GiornoLong = dayofweek = 1
+
+shortAvg  = Average[5](close)
+shortAvg2 = Average[10](close)
+iptn18    = shortAvg crosses over shortAvg2 and close > (shortAvg * 0.99)
+
+uptn116    = (dhigh(1) - dclose(1)) < 0.20 * (dhigh(1) - dlow(1))
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[20](close)
+
+// --- Ingressi (come l'originale)
+IF time >= MyStartTradeL AND time <= MyEndTradeL THEN
+   IF EntraLong AND iptn18 AND GiornoLong THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+ENDIF
+
+IF time >= MyStartTradeS AND time <= MyEndTradeS THEN
+   IF EntraShort AND MyTriggerS AND uptn116 THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Uscite (come l'originale)
+// giorni in posizione, come l'originale: il contatore riparte solo quando si passa da
+// fuori a dentro il mercato, quindi uno short che inverte un long eredita i giorni del long
+IF OnMarket <> OnMarket[1] THEN
+   DayInTrade = 0
+ENDIF
+IF OnMarket AND (Day > Day[1] OR (DayInTrade > 3 AND DayOfWeek < 1)) THEN
+   DayInTrade = DayInTrade + 1
+ENDIF
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL AND MaxDayInTradeL > 0 THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS AND MaxDayInTradeS > 0 THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+FineSettimana = dayofweek = 5 AND time = 210000
+
+IF LongOnMarket AND (barindex - tradeindex > BarreUscitaL OR FineSettimana) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (barindex - tradeindex > BarreUscitaS OR FineSettimana) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH FattoreVol AS "fattore di volatilità"
+GRAPH PsL AS "contratti long"

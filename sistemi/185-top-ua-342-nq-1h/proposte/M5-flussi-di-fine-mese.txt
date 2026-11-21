@@ -1,0 +1,272 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 NQ 1H  |  MODULO M5
+// Long anche negli altri giorni del cambio di mese (mutazione)
+//
+// Ipotesi. Fondi pensione e istituzioni vendono azioni nei giorni prima della fine
+// del mese per avere liquidità per i pagamenti, e chi riceve i pagamenti reinveste
+// subito dopo: nei mercati liquidi i rendimenti sono bassi da 8 a 4 giorni di borsa
+// prima dell'ultimo e alti nei giorni successivi, cambio di mese compreso (Etula et al.,
+// Review of Financial Studies 2020). Negli USA l'ultimo giorno del mese e i primi tre
+// rendono in media circa lo 0,15% al giorno (McConnell-Xu 2008), e il rendimento
+// negativo del lunedì si concentra nelle ultime due settimane del mese (Wang-Li-Erickson
+// 1997). Prove in conflitto: sull'S&P 500 una ricerca non trova più l'effetto dopo il
+// 1990 (fonti/prodotti/nasdaq.md, A3).
+// Andrea ha visto ingressi validi anche negli altri giorni ma ha tenuto solo il lunedì,
+// scelto sui risultati. Qui si aggiungono solo i giorni con un flusso di acquisti
+// documentato: l'ultimo giorno di borsa del mese e i primi tre, da lunedì a venerdì, con
+// lo stesso ingresso, le stesse uscite e la stessa taglia del lunedì. I long del venerdì
+// chiudono alle 21:00 come previsto dall'originale.
+// Direzione attesa: guadagno medio dei long aggiunti almeno pari a quello dei lunedì.
+// Variante (EscludiPressione = 1): niente long nei lunedì da 8 a 4 giorni di borsa
+// prima dell'ultimo, dove le vendite di fine mese spingono al ribasso; direzione attesa:
+// guadagno medio dei lunedì scartati più basso di quello dei tenuti.
+//
+// I giorni di borsa sono contati escludendo sabati e domeniche, non le festività.
+// La finestra del cambio di mese copre circa 4 giorni su 21. Un long si apre solo se non
+// ce n'è già uno: quello del lunedì resta aperto fino al venerdì, quindi i giorni
+// aggiunti entrano soprattutto nelle settimane in cui il lunedì non è entrato o è già
+// uscito a stop o target, e i long aggiunti restano aperti fino al venerdì come gli altri.
+// Attenzione: un long aperto da martedì a venerdì chiude lo short aperto il pomeriggio
+// prima (BUY con uno short aperto lo inverte), quindi cambia anche il report degli short.
+//
+// Varianti (AggiungiFineMese, EscludiPressione):
+//   1, 0   aggiunge i giorni del cambio di mese (proposta)
+//   0, 1   toglie i lunedì della finestra delle vendite
+//   1, 1   le due insieme
+// TuttiIGiorni = 1 (con UsaM5 = 1): long da lunedì a venerdì, solo per misurare. I long
+// del lunedì restano identici (tutti i long chiudono entro il venerdì), quindi i trade in
+// più sono esattamente quelli aperti negli altri giorni quando il lunedì non era in
+// posizione: è la misura chiesta da Andrea, senza le sovrapposizioni dei report per giorno.
+// Come provarlo: UsaM5 = 1 e UsaM5 = 0 (riferimento comune a tutta la tornata), report
+// long, short e tutte le posizioni.
+// Come giudicarlo:
+//   long aggiunti: guadagno medio = (profitto M5 - profitto riferimento) /
+//                  (trade M5 - trade riferimento), confrontato con quello dei lunedì;
+//                  aggiunge esposizione, quindi si confronta con il riferimento
+//                  ingrandito dello stesso guadagno (drawdown cresciuto meno del profitto);
+//   lunedì scartati: guadagno medio = (profitto riferimento - profitto M5) /
+//                  (trade riferimento - trade M5), confrontato con quello dei tenuti.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (US Tech 100 Cash da 1 €, valuta di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // 1 = posizione proporzionale al capitale attuale; 0 = non cresce con i profitti
+Leva                = 6        // PER IL TEST: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 0        // con Reinvesti = 0: contratti a peso 1; 0 = valore fisso Leva × Capitale
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // PER IL TEST (originale: 2, cioè rischio dell'8% invece del 4%)
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // valore di 1 punto per 1 contratto (US Tech 100 Cash 1 € -> 1)
+//
+// PER IL TEST: 6 × 5.000 = posizione da 30.000 in ogni trade, circa 1 contratto ai
+// prezzi di oggi e 7 nel 2016, così ogni anno pesa allo stesso modo e il minimo di 0,5
+// contratti non scatta mai; un trade che arriva allo stop del 4% perde 1.200. Con
+// Reinvesti = 0 il capitale del backtest non entra nei calcoli: se ProRealTime ferma il
+// backtest per capitale insufficiente, alzalo.
+//=========================================================================
+
+// --- Parametri M5
+UsaM5            = 1           // 0 = originale, 1 = modulo attivo
+AggiungiFineMese = 1           // long anche negli altri giorni del cambio di mese
+EscludiPressione = 0           // niente long nei lunedì della finestra delle vendite
+TuttiIGiorni     = 0           // 1 = long da lunedì a venerdì (solo per misurare)
+GiorniPrima      = 1           // giorni di borsa prima della fine del mese, compreso l'ultimo
+GiorniDopo       = 3           // primi giorni di borsa del mese
+PressioneDa      = 8           // finestra delle vendite: da 8 giorni di borsa prima dell'ultimo
+PressioneA       = 4           // ... a 4 giorni prima
+
+// --- Parametri della strategia (come l'originale)
+EntraLong     = 1
+EntraShort    = 1
+
+MySLL         = 4          // stop long, % del prezzo
+MySLS         = 4          // stop short
+MyTPL         = 2.5        // target long
+MyTPS         = 1.6        // target short
+
+MyStartTradeL = 080000
+MyEndTradeL   = 200000
+MyStartTradeS = 160000
+MyEndTradeS   = 200000
+PortATRMeno   = 4          // calo minimo dall'apertura della giornata, in escursioni medie orarie
+BarreUscitaL  = 90
+BarreUscitaS  = 100
+MaxDayInTradeL = 8          // giorni in posizione (contati come nell'originale)
+MaxDayInTradeS = 4
+ONCE DayInTrade = 0
+
+// --- M5: posizione del giorno nel mese, calcolata una volta al giorno dalle 08:00
+ONCE DataCalcolo = 0
+ONCE FineMese    = 0
+ONCE Pressione   = 0
+IF UsaM5 = 1 AND Date <> DataCalcolo AND time >= MyStartTradeL THEN
+   DataCalcolo = Date
+
+   GiorniMese = 31
+   IF Month = 4 OR Month = 6 OR Month = 9 OR Month = 11 THEN
+      GiorniMese = 30
+   ENDIF
+   IF Month = 2 THEN
+      GiorniMese = 28
+      IF Year MOD 4 = 0 THEN
+         GiorniMese = 29
+      ENDIF
+   ENDIF
+
+   // giorni di borsa rimasti nel mese dopo oggi (0 = oggi è l'ultimo)
+   Rimasti = 0
+   IF Day < GiorniMese THEN
+      g = DayOfWeek
+      FOR k = Day + 1 TO GiorniMese DO
+         g = g + 1
+         IF g = 7 THEN
+            g = 0
+         ENDIF
+         IF g >= 1 AND g <= 5 THEN
+            Rimasti = Rimasti + 1
+         ENDIF
+      NEXT
+   ENDIF
+
+   // giorni di borsa dall'inizio del mese, oggi compreso (1 = primo giorno)
+   GiornoDelMese = 0
+   g = DayOfWeek
+   FOR k = 1 TO Day DO
+      IF g >= 1 AND g <= 5 THEN
+         GiornoDelMese = GiornoDelMese + 1
+      ENDIF
+      g = g - 1
+      IF g < 0 THEN
+         g = 6
+      ENDIF
+   NEXT
+
+   FineMese = 0
+   IF Rimasti <= GiorniPrima - 1 OR GiornoDelMese <= GiorniDopo THEN
+      FineMese = 1
+   ENDIF
+
+   Pressione = 0
+   IF Rimasti >= PressioneA AND Rimasti <= PressioneDa THEN
+      Pressione = 1
+   ENDIF
+ENDIF
+
+// --- Capitale attuale, freno e posizioni (intestazione standard)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   IF ContrattiFissi > 0 THEN
+      ContrattiBase = ContrattiFissi
+   ELSE
+      ContrattiBase = Leva * Capitale / (close * ValorePerPunto)
+   ENDIF
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Segnali (come l'originale, più i giorni di M5)
+GiornoLong = dayofweek = 1
+IF UsaM5 = 1 THEN
+   GiornoFeriale = dayofweek >= 1 AND dayofweek <= 5
+   IF AggiungiFineMese = 1 AND FineMese = 1 AND GiornoFeriale THEN
+      GiornoLong = 1
+   ENDIF
+   IF EscludiPressione = 1 AND Pressione = 1 AND dayofweek = 1 THEN
+      GiornoLong = 0
+   ENDIF
+   IF TuttiIGiorni = 1 AND GiornoFeriale THEN
+      GiornoLong = 1
+   ENDIF
+ENDIF
+
+shortAvg  = Average[5](close)
+shortAvg2 = Average[10](close)
+iptn18    = shortAvg crosses over shortAvg2 and close > (shortAvg * 0.99)
+
+uptn116    = (dhigh(1) - dclose(1)) < 0.20 * (dhigh(1) - dlow(1))
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[20](close)
+
+// --- Ingressi (come l'originale)
+IF time >= MyStartTradeL AND time <= MyEndTradeL THEN
+   IF EntraLong AND iptn18 AND GiornoLong THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+ENDIF
+
+IF time >= MyStartTradeS AND time <= MyEndTradeS THEN
+   IF EntraShort AND MyTriggerS AND uptn116 THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Uscite (come l'originale)
+// giorni in posizione, come l'originale: il contatore riparte solo quando si passa da
+// fuori a dentro il mercato, quindi uno short che inverte un long eredita i giorni del long
+IF OnMarket <> OnMarket[1] THEN
+   DayInTrade = 0
+ENDIF
+IF OnMarket AND (Day > Day[1] OR (DayInTrade > 3 AND DayOfWeek < 1)) THEN
+   DayInTrade = DayInTrade + 1
+ENDIF
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL AND MaxDayInTradeL > 0 THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS AND MaxDayInTradeS > 0 THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+FineSettimana = dayofweek = 5 AND time = 210000
+
+IF LongOnMarket AND (barindex - tradeindex > BarreUscitaL OR FineSettimana) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (barindex - tradeindex > BarreUscitaS OR FineSettimana) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH FineMese AS "giorno del cambio di mese"
+GRAPH Pressione AS "finestra delle vendite"

@@ -1,0 +1,59 @@
+// MODULO: console di gestione a rischio per trade (sostituisce intestazione-capitale.txt
+//         nelle versioni di produzione)
+// Validato su: 185 NQ 1H, novembre 2026. Andrea ha trovato troppo complicate le leve
+//              separate su capitale e profitti con tetti variabili (M9): vuole sapere
+//              prima di ogni ingresso quanto rischia e avere una sola manopola per
+//              l'intensità del reinvestimento. Con RischioLong 6, RischioShort 10 e
+//              Aggressivita 1 equivale a M8 (leva 1,5 e PesoShort 1,65): da 5.000 a
+//              213.000 € nel backtest 2016-2026.
+// Richiede: StrategyProfit; gli stop della strategia in % del prezzo (MySLL, MySLS);
+//           gli ordini usano PsL e PsS (BUY PsL LOTS AT MARKET ...).
+// Produce:  CapitaleAttuale, CapitaleBase, RischioEuroL/S, PsL, PsS.
+//
+// Come sceglierne i valori su un sistema nuovo:
+// - RischioLong / RischioShort: % del capitale persa allo stop. Dal backtest a posizione
+//   fissa si legge il drawdown di ciascun lato; il rapporto tra i due rischi è quello
+//   che rende uguali i drawdown (su 185 NQ 10 / 6 = 1,65).
+// - Con lo stop in % del prezzo, rischio fisso = posizione di valore fisso. Con lo stop
+//   legato alla volatilità (ATR) la stessa formula diventa una taglia a volatilità:
+//   decidere se è voluto (moduli/lezioni.md, sezione Volatilità).
+// - Nei test delle proposte: Aggressivita = 0, così ogni trade rischia gli stessi euro e
+//   ogni anno pesa allo stesso modo; il riferimento è lo stesso file con UsaMx = 0.
+// - Nel backtest il drawdown in % va letto con una riga GRAPH (il report lo dà in euro):
+//   vedi sistemi/185-top-ua-342-nq-1h/versioni/PROVA-produzione-con-grafici.txt.
+// Valuta: tutto nella valuta di StrategyProfit (euro sui contratti da 1 €).
+
+//=========================================================================
+// CONSOLE DI GESTIONE
+// 1. SOLDI: CapitaleVersato = soldi messi nel sistema (prelievi e versamenti cambiano
+//    questo); ProfittiPrecedenti = guadagni delle esecuzioni precedenti, da riportare a
+//    mano a ogni riavvio. Backtest: CapitaleVersato = capitale del backtest, profitti 0.
+CapitaleVersato     = 5000
+ProfittiPrecedenti  = 0
+// 2. RISCHIO PER TRADE: % del capitale persa se scatta lo stop
+RischioLong         = 6
+RischioShort        = 10
+// 3. MANOPOLA DEL REINVESTIMENTO: quota dei profitti che entra nel calcolo del rischio
+//    0 = nessun reinvestimento (rischio fisso in euro), 1 = normale, 2 = profitti doppi.
+//    Le perdite contano sempre per intero.
+Aggressivita        = 1
+// 4. LIMITI
+MinContratti        = 0.5      // taglia minima: sotto, il trade entra comunque con il minimo
+MaxContratti        = 80
+//=========================================================================
+
+// ... parametri della strategia, con MySLL e MySLS (stop in %) ...
+
+StopL = MySLL / 100
+StopS = MySLS / 100
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+RischioEuroL = max(0, CapitaleBase) * RischioLong / 100
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+PsL = max(MinContratti, min(MaxContratti, RischioEuroL / (close * StopL)))
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))

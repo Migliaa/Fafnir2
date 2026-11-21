@@ -1,0 +1,178 @@
+//-------------------------------------------------------------------------
+// 138 DAX LSD2H4 1H  |  MODULO M3
+// Short solo nei periodi agitati (moduli/filtro-regime-volatilita.txt)
+//
+// Ipotesi. Lo short vende un calo notturno e tiene tutta la giornata del martedì. Se il
+// suo vantaggio è momento intraday, cioè il movimento della mattina che prosegue per le
+// coperture di chi ha esposizione gamma negativa, deve essere più forte nei periodi
+// agitati (Gao et al. 2018; Li, Sakkas, Urquhart 2022; Baltussen et al. 2021). Sul DAX è
+// già successo: gli short di 165 DAX guadagnavano 31 € a trade nei periodi agitati e 7 €
+// in quelli calmi (M5). Se invece il vantaggio è di calendario (il martedì), i due regimi
+// rendono uguale (fonti/prodotti/dax.md, ipotesi H13; principio 1 di
+// idee/idee-di-trading.md).
+// Periodo agitato: volatilità delle ultime 2 settimane (escursione media di 10 giorni)
+// almeno pari a quella degli ultimi 5 mesi (100 giorni), calcolata sulle barre
+// giornaliere chiuse, quindi fino al lunedì.
+// Direzione attesa: gli short dei periodi agitati guadagnano più di quelli scartati. È
+// soprattutto una misura del tipo di vantaggio: decide se nella tornata dopo servono
+// filtri di volatilità o la taglia legata alla volatilità.
+//
+// Varianti (SogliaVol):
+//   1.0   soglia validata su 165 DAX (proposta)
+//   1.2   solo i periodi più agitati
+// Come provarlo: UsaM3 = 1 e UsaM3 = 0 (riferimento comune a M1, M2, M3), report short.
+// Come giudicarlo: guadagno medio degli short scartati = (profitto riferimento − profitto
+// modulo) / (trade riferimento − trade modulo), confrontato con quello dei tenuti; poi se
+// il drawdown scende più del profitto. Su 185 NQ (M3) i periodi agitati rendevano di più
+// ma il drawdown stava tutto lì: in quel caso il filtro non serve.
+//
+// La riga GRAPH in fondo serve solo nel backtest: toglila prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (Germany 40 Cash da 1 €)
+//
+// 1. SOLDI: CapitaleVersato = soldi messi nel sistema; ProfittiPrecedenti = guadagni
+//    delle esecuzioni precedenti, da riportare a mano a ogni riavvio.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 10000    // PER IL TEST (capitale del backtest 10.000 €)
+ProfittiPrecedenti  = 0
+// 2. RISCHIO PER TRADE: % del capitale persa se scatta lo stop
+RischioLong         = 15       // PER IL TEST: 1.500 € con lo stop al 5%
+RischioShort        = 9        // PER IL TEST: 900 € con lo stop al 3%
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso in euro, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST: stesso rischio in euro per ogni trade
+// 4. LIMITI
+MinContratti        = 1
+MaxContratti        = 80
+//
+// PER IL TEST: ogni short rischia 900 € allo stop del 3%, cioè una posizione da 30.000 €
+// in ogni trade: 3 contratti con il DAX a 10.000, 1,1 a 27.000. Ogni anno pesa allo
+// stesso modo e il minimo di 1 contratto non scatta mai. L'originale invece entra quasi
+// sempre con 1 contratto, quindi i suoi euro non sono confrontabili con questi.
+//=========================================================================
+
+// --- Parametri M3
+UsaM3          = 1             // 0 = originale, 1 = modulo attivo
+SogliaVol      = 1.0           // volatilità 2 settimane / volatilità 5 mesi
+
+// --- Parametri della strategia (come l'originale)
+EntraLong      = 0
+EntraShort     = 1
+Escludi2022    = 1             // 1 = come l'originale: niente trade ad aprile e luglio 2022
+
+MySLL          = 5             // stop long, % del prezzo
+MySLS          = 3             // stop short
+MyTPL          = 1.5           // target long
+MyTPS          = 3             // target short
+SLbrkevenPL    = 1.1           // guadagno % oltre il quale lo stop del long va all'ingresso
+SLbrkevenPS    = 2.5           // idem per lo short
+TPbrkevenPL    = 2.5           // perdita % oltre la quale il target del long va all'ingresso
+TPbrkevenPS    = 2.5           // idem per lo short
+
+// --- M3: volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVol
+
+FiltroM3 = 1
+IF UsaM3 = 1 THEN
+   FiltroM3 = Agitato
+ENDIF
+
+// --- Posizioni (dalla console)
+StopL = MySLL / 100
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioEuroL = max(0, CapitaleBase) * RischioLong / 100
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+
+PsL = max(MinContratti, min(MaxContratti, RischioEuroL / (close * StopL)))
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))
+
+// --- Segnali (come l'originale)
+Time2Trade = 1
+IF Escludi2022 = 1 AND (month = 4 OR month = 7) AND year = 2022 THEN
+   Time2Trade = 0
+ENDIF
+
+multiplierS = 0.3
+bptns08     = low < open[1] - multiplierS * (high[1] - low[1])
+MyTriggerS  = bptns08
+
+MyPtnMRL    = DayOfWeek = 2 AND time = 040000
+MyPtnMRS    = DayOfWeek = 2 AND time = 040000
+
+range1d     = DHigh(1) - DLow(1)
+body1d      = abs(DOpen(1) - DClose(1))
+uptn008     = body1d > 0.5 * range1d
+uptn141     = (close[1] < open[1] AND close[2] > open[2])
+MyPtnUNMRSY = uptn141
+MyPtnUNMRSN = uptn008
+
+// --- Ingressi
+IF Time2Trade THEN
+   IF EntraLong AND MyPtnMRL THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+
+   IF EntraShort AND MyTriggerS AND MyPtnMRS AND MyPtnUNMRSY AND NOT MyPtnUNMRSN AND FiltroM3 THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Stop e target spostati all'ingresso (come l'originale)
+IF LongOnMarket AND SLbrkevenPL > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= SLbrkevenPL THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND SLbrkevenPS > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= SLbrkevenPS THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF LongOnMarket AND TPbrkevenPL > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= TPbrkevenPL THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND TPbrkevenPS > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= TPbrkevenPS THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+
+// --- Uscite (come l'originale): martedì alle 21:00
+ETime = (barindex - tradeindex > 17) OR time = 210000
+
+IF LongOnMarket AND (ETime OR DayOfWeek <> 2) THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND (ETime OR DayOfWeek <> 2) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH RegimeVol AS "volatilità 2 settimane / 5 mesi"

@@ -1,0 +1,189 @@
+//-------------------------------------------------------------------------
+// Codice fornito da Andrea il 2026-11-20 (Nasdaq 100, timeframe 1 ora).
+// Andrea ha limitato il long al lunedì; anche altri giorni davano ingressi validi.
+// NON MODIFICARE: è il riferimento per tutti i confronti.
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 185 TOP_UA_342_NQ_15
+
+DEFPARAM CumulateOrders = False  // Non cumulare ordini
+
+//==//==//==//==//==//==//==//==//==// START - PARAMETRI DI BASE
+EntraLong       = 1
+EntraShort      = 1
+
+BuyLot          = 1 //1 acquista Lotti, altrimenti acquista sempre 1 contratto
+TagliaPosizione = 1
+
+//==//==//==//==//==//==//==//==//==// END - PARAMETRI DI BASE
+
+//==//==//==//==//==//==//==//==//==// START - Gestione dinamica SL / TP via ATR
+
+UseDinamicSLTP=0   // 1 = Usa valori di stop loss e take profit dinamici impostati sulla volatilità
+
+// -- valori % SL e TP Fissi
+MySLL   = 4       // SL fisso LONG
+MySLS   = 4       // SL fisso SHORT
+MyTPL   = 2.5       // TP fisso LONG
+MyTPS   = 1.6      // TP fisso SHORT
+
+// -- moltiplicatori SL e TP Dinamici
+SLmultL = 0        // stop per posizioni LONG
+SLmultS = 0        // stop per posizioni SHORT
+TPmultL = 0       // take-profit LONG
+TPmultS = 0       // take-profit SHORT
+
+// -- parametri comuni -----------------------------------------------------
+If UseDinamicSLTP then
+ATRperiod = 20     // periodo ATR //Su barra 1H, ok 20 period (20 ore)
+ATRpts = AverageTrueRange[ATRperiod](close)
+
+// ---------- STOP LOSS ----------------------------------------------------
+MySLL = (SLmultL * ATRpts) / close * 100    // %
+MySLS = (SLmultS * ATRpts) / close * 100
+// ---------- TAKE PROFIT --------------------------------------------------
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+endif
+
+//Print MyTPS as "MyTPS"
+
+//==//==//==//==//==//==//==//==//==// END - Gestione dinamica SL / TP via ATR
+
+//==//==//==//==//==//==//==//==//==// START - REINVEST
+
+SProfit          = Strategyprofit + 1000
+Reinvest         = 0    //Reinvest = 1 ; No Reinvest = 0
+InitCapital      = 5000  //Suggested Capital to start 2500
+RiskOnCapitalL   = 4    //Suggested %Factor to start buy 1 contract 1.5
+RiskOnCapitalS   = 8
+RiskOnProfit     = 18
+MaxPosition      = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+If MySLL>0 then
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit * RiskOnProfit/100))/(close*(MySLL/100))
+else
+PsL=0
+endif
+
+If MySLS>0 then
+PsS=((InitCapital)*(RiskOnCapitalS/100) + (SProfit * RiskOnProfit/100))/(close*(MySLL/100))
+else
+PsS=0
+endif
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 0.5 then
+PsL = 0.5
+endif
+
+If PsS < 0.5 then
+PsS = 0.5
+endif
+
+//==//==//==//==//==//==//==//==//==// END - REINVEST
+
+MyStartTradeL     = 80000 //o 150000
+MyEndTradeL       = 200000 //o 190000
+
+MyStartTradeS     = 160000 //o 150000
+MyEndTradeS       = 200000
+
+MaxDayInTradeL   = 8
+MaxDayInTradeS   = 4
+MaxEntriesPerDay = 1
+PortATRpiu       = 0//4.5
+PortATRMeno      = 4
+Once DayInTrade  = 0
+
+DayTradingL = dayofweek = 1
+shortAvg                           = Average[5](close)
+shortAvg2                          = Average[10](close)
+iptn18=shortAvg crosses over shortAvg2 and close>(shortAvg*0.99)
+MyPtnLY    = iptn18//4 24, 23, 6,18 !!!
+
+
+DayTradingS = 1
+uptn65     = ((dhigh(0)<(dlow(0)+dlow(0)*1.5/100)))
+uptn116    = (dhigh(1)-dclose(1))<0.20*(dhigh(1)-dlow(1))
+MyTriggerS = Close < DOpen(0) - PortATRMeno*AverageTrueRange[20](close)
+MyPtnSY    = uptn116
+MyPtnSN    = 0//uptn65
+
+// Funzione per gestire l'inizio della sessione e il calcolo degli OHLC su più sessioni
+highd1     = DHigh(1)  // Massimo della sessione precedente
+lowd1      = DLow(1)    // Minimo della sessione precedente
+
+// Logica di trading durante la finestra temporale
+if time >= MyStartTradeL and time <= MyEndTradeL then
+
+if EntraLong  AND MyPtnLY  and DayTradingL then
+buy PsL lots at Market
+if MySLL > 0 then
+SET STOP %LOSS MySLL
+endif
+if MyTPL>0 then
+SET TARGET %PROFIT MyTPL
+endif
+
+endif
+endif
+if time >= MyStartTradeS and time <= MyEndTradeS then
+if EntraShort AND MyTriggerS AND MyPtnSY AND not MyPtnSN then
+sellshort PsS lots at Market
+if MySLS > 0 then
+SET STOP %LOSS MySLS
+endif
+if MyTPS>0 then
+SET TARGET %PROFIT MyTPS
+endif
+endif
+endif
+
+If OnMarket<>OnMarket[1] then
+DayInTrade=0
+endif
+
+If OnMarket AND (Day>Day[1] OR (DayInTrade>3 AND DayOfWeek<1)) then
+DayInTrade=DayInTrade+1
+endif
+
+If LongOnMarket  AND DayInTrade>=MaxDayInTradeL and MaxDayInTradeL>0 then
+sell at market
+endif
+
+If ShortOnMarket AND DayInTrade>=MaxDayInTradeS and MaxDayInTradeS>0 then
+exitshort at market
+endif
+
+timeBars = barindex-tradeindex>90
+end = dayofweek = 5 and time = 210000
+If LongOnMarket and (timeBars or end )then
+sell at market
+endif
+
+If ShortOnMarket then
+ES0=barindex-tradeindex>100
+ES1=0 //barindex-tradeindex>s1 and PositionPerf(0)<0
+
+if ES0 OR ES1 then
+exitshort at market
+endif
+endif
+
+If onmarket and dayofweek=5 and time=210000 then
+//sell at market
+exitshort at market
+endif

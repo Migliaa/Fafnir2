@@ -1,0 +1,184 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M10 (su base C1 = originale + M4 + M6 + M8)
+// Freno sul drawdown in valuta coerente: la taglia scende mentre il capitale è sotto il massimo
+//
+// È l'idea di M1 (Grossman-Zhou 1993) rifatta senza l'errore di valuta e sopra la
+// versione combinata, perché un freno sul drawdown ha senso solo con il reinvestimento.
+// Al massimo di capitale il freno vale 1; scende in modo lineare fino a FrenoMinimo
+// quando il drawdown arriva a MaxDD.
+// UsaFreno = 0 riproduce esattamente C1.
+//
+// COME GIUDICARLO: il freno abbassa sempre il drawdown, ma rallenta la crescita. Il
+// confronto giusto è con C1 a rischio ridotto: prova C1 con RiskOnCapital 0.12 e 0.10
+// e confronta M10 con quella delle due che ha lo stesso drawdown % massimo. Se a parità
+// di drawdown M10 cresce di più, il freno vale; altrimenti basta ridurre il rischio.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+UsaM4 = 1
+UsaM6 = 1
+UsaM8 = 1
+UsaFreno = 1              // 0 = C1, 1 = freno attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+// --- Parametri freno (prova MaxDD 0.3 / 0.4 / 0.5)
+MaxDD        = 0.40       // drawdown dal massimo a cui la taglia arriva a FrenoMinimo
+FrenoMinimo  = 0.4        // taglia minima durante il drawdown, come frazione di quella piena
+
+// --- Volatilità (usata da M4 e M8)
+VolShock = AverageTrueRange[24](close)
+VolBreve = AverageTrueRange[120](close)
+VolLunga = AverageTrueRange[2000](close)
+
+// --- M4
+SogliaShockL = 2
+FiltroL = 1
+IF UsaM4 = 1 AND VolLunga > 0 THEN
+   IF VolShock / VolLunga > SogliaShockL THEN
+      FiltroL = 0
+   ENDIF
+ENDIF
+
+// --- M8
+FattoreMinVol = 0.5
+FattoreMaxVol = 1.5
+FattoreM8 = 1
+IF UsaM8 = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreM8 = max(FattoreMinVol, min(FattoreMaxVol, VolLunga / VolBreve))
+ENDIF
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000
+RiskOnCapital       = 0.15
+MaxPosition         = 80
+
+// --- M6
+CapitaleYen         = 800000
+QuotaReinvestita    = 1
+FattoreMinimo       = 0.5
+FattoreMassimo      = 25
+
+CapitaleAttuale = CapitaleYen + StrategyProfit
+FattoreM6 = 1
+IF UsaM6 = 1 THEN
+   FattoreM6 = 1 + QuotaReinvestita * StrategyProfit / CapitaleYen
+   FattoreM6 = max(FattoreMinimo, min(FattoreMassimo, FattoreM6))
+ENDIF
+
+// --- Freno: distanza del capitale dal pavimento (1 - MaxDD) * massimo, normalizzata
+ONCE PiccoCapitale = CapitaleYen
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+Freno = 1
+IF UsaFreno = 1 AND PiccoCapitale > 0 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+PsL = (RiskCapitalBase / ((close * (MySLL / 100)) * 3)) * FattoreM6 * Freno
+PsS = (RiskCapitalBase / (close * (MySLS / 100))) * FattoreM6 * FattoreM8 * Freno
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL AND FiltroL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and barindex-tradeindex>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif
+
+// --- Solo backtest: togli prima del reale
+DDPercento = 100 * (CapitaleAttuale / PiccoCapitale - 1)
+GRAPH Freno AS "freno"
+GRAPH DDPercento AS "drawdown % trade chiusi"

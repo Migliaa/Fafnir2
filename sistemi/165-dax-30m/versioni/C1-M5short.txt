@@ -1,0 +1,111 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  VERSIONE C1 = originale + M5 sugli short
+// M5: lo short si apre solo se la volatilità delle ultime 2 settimane è almeno quella
+// degli ultimi 5 mesi circa. Nei backtest 2015-2026 a 1 contratto: guadagno medio degli
+// short da 18,07 a 31,38 €, drawdown da -1.377,60 a -707,50 € (registro-test.md).
+// Long, taglia e reinvestimento identici all'originale.
+// Base della seconda tornata (M6-M9). Non è ancora la versione per il reale.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+
+// --- M5: regime di volatilità per lo short (barre giornaliere chiuse)
+SogliaVolS = 1.0          // volatilità 2 settimane / volatilità 5 mesi
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 1    //Reinvest = 1 ; No Reinvest = 0
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif

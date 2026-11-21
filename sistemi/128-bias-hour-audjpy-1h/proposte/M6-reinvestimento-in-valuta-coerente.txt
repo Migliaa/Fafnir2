@@ -1,0 +1,154 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M6
+// Reinvestimento a frazione fissa del capitale, con capitale e profitto nella stessa valuta
+//
+// Corregge M1. StrategyProfit è nella valuta dello strumento (yen per AUDJPY: lo
+// vedi nel report, capitale iniziale 800.000 ¥), mentre M1 lo sommava a 3000
+// pensati in euro: dopo la prima perdita il capitale risultava negativo e la
+// taglia saltava tra il minimo e il massimo.
+// Qui la taglia è quella dell'originale moltiplicata per
+//     1 + QuotaReinvestita * StrategyProfit / CapitaleYen
+// Con QuotaReinvestita = 1 il rischio per trade resta la stessa percentuale del
+// capitale man mano che questo cresce o scende. Il freno sul drawdown di M1 è tolto.
+// UsaM6 = 0 riproduce esattamente l'originale con Reinvest = 0.
+//
+// CapitaleYen: nel backtest metti il capitale iniziale del backtest (800000).
+// Prima del reale controlla in che valuta ProOrder restituisce StrategyProfit:
+// se fosse in euro il fattore resterebbe vicino a 1 (niente reinvestimento,
+// nessun danno), mentre CapitaleYen va comunque espresso in yen.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+UsaM6 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000    //serve solo alla formula originale della taglia
+RiskOnCapital       = 0.15
+MaxPosition         = 80
+
+// --- Parametri M6
+CapitaleYen         = 800000  // capitale nella valuta di StrategyProfit (yen)
+QuotaReinvestita    = 1       // 1 = taglia proporzionale al capitale; 0.5 = reinvesti metà dei profitti
+FattoreMinimo       = 0.5     // in perdita la taglia non scende sotto metà dell'originale
+FattoreMassimo      = 25      // tetto di sicurezza (oltre, comunque, interviene MaxPosition)
+
+CapitaleAttuale = CapitaleYen + StrategyProfit
+
+FattoreM6 = 1
+IF UsaM6 = 1 THEN
+   FattoreM6 = 1 + QuotaReinvestita * StrategyProfit / CapitaleYen
+   FattoreM6 = max(FattoreMinimo, min(FattoreMassimo, FattoreM6))
+ENDIF
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+PsL = (RiskCapitalBase / ((close * (MySLL / 100)) * 3)) * FattoreM6
+PsS = (RiskCapitalBase / (close * (MySLS / 100))) * FattoreM6
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and barindex-tradeindex>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+// Drawdown in % del capitale, calcolato sui trade chiusi: è il numero giusto per
+// confrontare un sistema che reinveste con uno che non lo fa.
+ONCE PiccoCapitale = CapitaleYen
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+DDPercento = 100 * (CapitaleAttuale / PiccoCapitale - 1)
+GRAPH FattoreM6 AS "fattore taglia"
+GRAPH DDPercento AS "drawdown % trade chiusi"

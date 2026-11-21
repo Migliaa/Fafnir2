@@ -1,0 +1,175 @@
+//-------------------------------------------------------------------------
+// GBPJPY  |  M6, tentativo 2 di 4: CICLO SETTIMANALE DELLO YEN (sistema nuovo)
+// Grafico: GBP/JPY mini (10.000 GBP, 100 yen per pip), meglio a 1 ORA se lo storico
+// orario parte prima del 2019 (più anni di prova); funziona uguale a 30 minuti.
+//
+// L'idea. Su AUDJPY il sistema 128 BIAS HOUR compra il lunedì alle 03:00 e chiude il
+// mercoledì alle 22:00, vende il giovedì alle 12:00 e chiude il venerdì verso le 17:00:
+// guadagna in reale e su 12 anni di backtest, con qualunque trend di fondo (V1 di
+// idee/idee-di-trading.md). La spiegazione non è dimostrata, ma riguarda lo yen
+// almeno quanto il dollaro australiano, e GBP/JPY è l'altro grande cross di carry
+// contro yen. Il sistema 097 BRK di Andrea, scritto senza pensare a V1, compra solo
+// lunedì e mercoledì e vende solo martedì, giovedì e venerdì: è compatibile con lo
+// stesso ciclo. La letteratura non conferma un ciclo settimanale stabile sullo yen
+// (fonti/prodotti/gbpjpy.md, B6), quindi è una prova vera: se il ciclo è di AUD e non
+// di JPY, qui non funziona.
+// Uscite: il long chiude il mercoledì alle 22:00, prima delle 23:00 in cui IG calcola
+// il finanziamento triplo; lo short chiude il venerdì alle 17:00, al fixing di Londra,
+// prima del tratto in cui GBP/JPY sale (fonti/prodotti/gbpjpy.md, A1). Nessuna
+// posizione nel weekend.
+// Forma delle uscite (V2 e V3): long con stop stretto (0,4%, circa metà
+// dell'escursione giornaliera) e uscita a tempo; short con stop di emergenza al 2% e
+// uscita a tempo.
+//
+// Regola di 128 BIAS HOUR per un prodotto nuovo: prima gli orari fissi; si va avanti
+// solo se il profit factor resta sopra 1,3 (idee/idee-di-trading.md, V1).
+//
+// COME PROVARLO (report long e short)
+// a) Valori del file: solo calendario, senza i pattern di 128 BIAS HOUR.
+// b) UsaPattern = 1: aggiunge le quattro esclusioni di 128 BIAS HOUR (scelte su AUDJPY:
+//    se peggiorano, il pattern era adattato a quel prodotto).
+// c) Solo se a) supera 1,3 di profit factor su un lato: TagliaVolS = 1 per lo short
+//    (validata su AUDJPY, M8: drawdown -25%), e l'ottimizzazione degli stop:
+//    MySLL da 0.3 a 0.8 passo 0.1, MySLS da 1 a 2.5 passo 0.5 (24 combinazioni).
+//    Gli orari d'ingresso si possono ottimizzare (OraIngressoL da 1 a 5 passo 1,
+//    OraIngressoS da 10 a 14 passo 1: con gli stop 600 combinazioni), ma è la parte
+//    più esposta al sovra-adattamento: va guardata con il walk forward.
+// COME GIUDICARLO
+// - Lato per lato: profit factor, guadagno medio rispetto allo stop, anni in perdita.
+//   Su AUDJPY: long profit factor 2,2 e guadagno medio 0,65 volte lo stop; short 1,6.
+// - Il confronto con 097 BRK è a parità di posizione (2.000.000 yen): guadagno medio
+//   per trade, profitto / drawdown, e quanto le due curve si muovono insieme (se le
+//   perdite cadono in mesi diversi, i due sistemi si possono tenere insieme).
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 6000
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in yen, la valuta di StrategyProfit su GBP/JPY
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA (in yen)
+//    Primo avvio: CapitaleVersato = soldi messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 1000000  // PER IL TEST
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop
+RischioLong         = 0.8      // PER IL TEST: 8.000 yen con stop 0,4% = 2.000.000 di posizione
+RischioShort        = 4        // PER IL TEST: 40.000 yen con stop 2% = 2.000.000 di posizione;
+                               // lo stop dello short scatta di rado, esce quasi sempre a tempo
+
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5      // verificare il minimo di IG sul mini
+MaxContratti        = 80
+ValorePerPunto      = 10000    // yen per 1,00 di prezzo, 1 contratto mini (10.000 GBP)
+//
+// Con questi valori entrambi i lati hanno 2.000.000 yen di posizione, come i test di
+// 097 BRK: i guadagni medi si confrontano direttamente.
+//=========================================================================
+
+// --- Interruttori
+EntraLong   = 1
+EntraShort  = 1
+UsaPattern  = 0                // 1 = esclusioni di 128 BIAS HOUR (uptn049, uptn091, uptn134, uptn142)
+TagliaVolS  = 0                // 1 = short x volatilità 5 mesi / 2 settimane, tra 0,5 e 1,5
+
+// --- Variabili da ottimizzare (ore decimali)
+OraIngressoL = 3               // lunedì; da 1 a 5, passo 1
+MySLL        = 0.4             // stop long, % del prezzo; da 0.3 a 0.8, passo 0.1
+OraIngressoS = 12              // giovedì; da 10 a 14, passo 1
+MySLS        = 2               // stop short; da 1 a 2.5, passo 0.5
+// (il rischio per trade resta fisso: uno stop più stretto vuol dire una posizione più grande)
+
+// --- Parametri fissi (come 128 BIAS HOUR)
+MyTPL       = 2                // target long, %
+MyTPS       = 3.4              // target short, %
+OraUscitaL  = 22               // mercoledì
+OraUscitaS  = 17               // venerdì
+
+// --- Volatilità giornaliera (barre giornaliere chiuse), solo per TagliaVolS
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+FattoreVolS = 1
+IF TagliaVolS = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreVolS = max(0.5, min(1.5, VolLunga / VolBreve))
+ENDIF
+
+// --- Posizioni (dalla console)
+StopL = MySLL / 100
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioYenL = max(0, CapitaleBase) * RischioLong / 100
+RischioYenS = max(0, CapitaleBase) * RischioShort / 100
+
+PsL = max(MinContratti, min(MaxContratti, RischioYenL / (close * StopL * ValorePerPunto)))
+PsS = max(MinContratti, min(MaxContratti, RischioYenS / (close * StopS * ValorePerPunto) * FattoreVolS))
+
+// --- Ora della barra in decimali (ora di chiusura, come Time)
+OraBarra = Hour + Minute / 60
+
+// --- Segnali di calendario
+TriggerL = DayOfWeek = 1 AND ABS(OraBarra - OraIngressoL) < 0.01
+TriggerS = DayOfWeek = 4 AND ABS(OraBarra - OraIngressoS) < 0.01
+
+// --- Esclusioni di 128 BIAS HOUR (solo con UsaPattern = 1; scelte su AUDJPY a 1 ora)
+// long: niente dopo tre chiusure giornaliere in rialzo, né se la barra d'ingresso non
+// ha superato il massimo della precedente
+// short: niente se mercoledì è stato un inside day, né se l'ultima barra è salita
+// dopo una barra in calo
+uptn049 = DClose(1) > DClose(2) AND DClose(2) > DClose(3) AND DClose(3) > DClose(4)
+uptn091 = High[0] < High[1]
+uptn134 = DHigh(2) > DHigh(1) AND DLow(2) < DLow(1)
+uptn142 = Close[1] > Open[1] AND Close[2] < Open[2]
+
+EsclusoL = 0
+EsclusoS = 0
+IF UsaPattern = 1 THEN
+   EsclusoL = uptn049 OR uptn091
+   EsclusoS = uptn134 OR uptn142
+ENDIF
+
+// --- Ingressi
+IF EntraLong AND TriggerL AND NOT EsclusoL AND NOT OnMarket THEN
+   BUY PsL LOTS AT MARKET
+   SET STOP %LOSS MySLL
+   SET TARGET %PROFIT MyTPL
+ENDIF
+
+IF EntraShort AND TriggerS AND NOT EsclusoS AND NOT OnMarket THEN
+   SELLSHORT PsS LOTS AT MARKET
+   SET STOP %LOSS MySLS
+   SET TARGET %PROFIT MyTPS
+ENDIF
+
+// --- Uscite a calendario
+// (se manca la barra dell'ora d'uscita, esce alla prima barra successiva)
+IF LongOnMarket AND ((DayOfWeek = 3 AND OraBarra >= OraUscitaL - 0.01) OR DayOfWeek >= 4) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND ((DayOfWeek = 5 AND OraBarra >= OraUscitaS - 0.01) OR DayOfWeek = 1) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest (togli prima del reale)
+GRAPH DayOfWeek AS "giorno"
+GRAPH PsL AS "contratti long"

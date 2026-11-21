@@ -1,0 +1,201 @@
+//-------------------------------------------------------------------------
+// 128 BIAS USDCHF 1H  |  M4, tentativo 4: I TUOI TRADE, CON ORARI E TAGLIA DIVERSI
+// Grafico: USD/CHF Mini (10.000 USD, 1 franco per pip), 1 ORA, orari italiani.
+//
+// Con UsaM4 = 0 è il tuo originale senza reinvestimento, riga per riga (159 trade,
+// 26,72 franchi a trade, drawdown -438), salvo l'inizio del backtest: PreLoadBars =
+// 3000 può spostarlo in avanti. Per questo il riferimento va lanciato da questo file.
+//
+// L'idea. Il segnale resta il tuo (mercoledì alle 13:00, stessi pattern e mesi): i
+// trade sono gli stessi. Cambiano tre cose, ciascuna con il suo parametro:
+// 1. RitardoIngresso: ore di attesa tra il segnale e l'ingresso. Con 12 si entra il
+//    giovedì all'01:00, dopo le 23:00 del mercoledì in cui IG addebita tre giorni di
+//    finanziamento. Lo short paga circa 1 franco al giorno per contratto: entrare il
+//    giovedì risparmia circa 3 franchi a trade, che il backtest NON mostra. Il
+//    backtest mostra solo quanto rende il tratto mercoledì 13:00 - giovedì 01:00: se
+//    rende meno di 3 franchi a trade, entrare dopo conviene nel reale.
+// 2. OraUscitaS: ora di uscita del venerdì. Dopo il fixing di Londra delle 17:00 il
+//    dollaro tende a scendere (fonti/prodotti/usdchf.md, A3): uscire alle 19:00 o alle
+//    21:00 dovrebbe aggiungere 1-2 franchi a trade, senza finanziamento in più.
+// 3. TagliaVolS: posizione inversa alla volatilità dell'ultima settimana rispetto agli
+//    ultimi 4 mesi, tra 0,5 e 1,5 volte (moduli/taglia-volatilita-uscita-a-tempo.txt).
+//    Su AUD/JPY ha ridotto del 25% il drawdown dello short di fine settimana, che
+//    esce a tempo come il tuo. Il tuo stop all'1% è lontano rispetto all'oscillazione
+//    di 52 ore (circa 0,8%): la perdita dipende soprattutto dalla volatilità del
+//    periodo. Attesa: drawdown più basso a parità di profitto.
+//
+// RIFERIMENTO: lo stesso file con UsaM4 = 0.
+//
+// COME PROVARLO (report short)
+// a) UsaM4 = 0: riferimento.
+// b) Ottimizzazione con UsaM4 = 1 (56 combinazioni):
+//      RitardoIngresso da 0 a 12 passo 2   (0 = alle 13:00 come ora; 12 = giovedì 01:00)
+//      OraUscitaS      da 15 a 21 passo 2  (17 = come ora)
+//      TagliaVolS      da 0 a 1 passo 1
+//    Mandami la tabella: con Ritardo 0, Uscita 17, TagliaVol 0 deve uscire il
+//    riferimento. Bastano i report della combinazione migliore e di quella con
+//    Ritardo 12 e la stessa uscita.
+//
+// COME GIUDICARLO
+// - Ingresso: guadagno medio di Ritardo 12 contro Ritardo 0; se la differenza è
+//   sotto i 3 franchi a trade, Ritardo 12 è meglio nel reale.
+// - Uscita: guadagno medio e drawdown a parità di trade.
+// - Taglia: profitto / drawdown contro il riferimento (9,7).
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in franchi, la valuta di StrategyProfit su USD/CHF
+// 1. SOLDI: CapitaleVersato = soldi messi nel sistema; ProfittiPrecedenti = guadagni
+//    delle esecuzioni precedenti, da riportare a mano a ogni riavvio.
+CapitaleVersato     = 6000     // PER IL TEST: come InitCapital dell'originale
+ProfittiPrecedenti  = 0
+// 2. RISCHIO PER TRADE: % del capitale persa se scatta lo stop
+RischioLong         = 1.5
+RischioShort        = 1.5      // 90 franchi = 6.000 x 1% x GrowthFactor 1,5 dell'originale
+// 3. REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+// 4. LIMITI
+MinContratti        = 1        // come l'originale
+MaxContratti        = 80
+ValorePerPunto      = 10000    // franchi per 1,00 di prezzo, 1 contratto mini (10.000 USD)
+//=========================================================================
+
+// --- Interruttori e parametri da ottimizzare
+UsaM4           = 1            // 0 = il tuo originale
+RitardoIngresso = 0            // ore dopo il segnale delle 13:00; da 0 a 12 passo 2
+OraUscitaS      = 17           // venerdì; da 15 a 21 passo 2
+TagliaVolS      = 0            // 1 = posizione inversa alla volatilità
+
+EntraLong  = 0
+EntraShort = 1
+
+MySLL = 3.5
+MySLS = 1
+MyTPL = 4
+MyTPS = 3.5
+
+// --- Taglia (con questi valori uguale all'originale senza reinvestimento)
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+PsL = max(MinContratti, min(MaxContratti, max(0, CapitaleBase) * RischioLong / 100 / (close * MySLL / 100 * ValorePerPunto)))
+PsS = max(MinContratti, min(MaxContratti, max(0, CapitaleBase) * RischioShort / 100 / (close * MySLS / 100 * ValorePerPunto)))
+
+// --- Taglia a volatilità (moduli/taglia-volatilita-uscita-a-tempo.txt)
+VolBreve = AverageTrueRange[120](close)       // circa 1 settimana
+VolLunga = AverageTrueRange[2000](close)      // circa 4 mesi
+FattoreVol = 1
+IF UsaM4 = 1 AND TagliaVolS = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreVol = max(0.5, min(1.5, VolLunga / VolBreve))
+ENDIF
+PsSIngresso = max(0.5, PsS * FattoreVol)      // sotto il contratto minimo solo con TagliaVolS = 1
+
+// --- Segnale: il tuo codice
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL= DayOfWeek=5 AND Time=170000 and month <>7
+TriggerS=DayOfWeek=3 AND Time=130000 and month <>8 and month <>2
+
+If (Day=2 AND month=9 and year=2011) OR (day=14 AND month=1 AND year=2015) then
+   TriggerL=0
+   TriggerS=0
+endif
+
+uptn104 = (Dlow(0)>Dlow(1)+Dlow(1))
+uptn119 = 0
+if TriggerL then
+   PtnMRLY   = 1
+   PtnMRLN   = 0
+   PtnUNMRLY = uptn104
+   PtnUNMRLN = uptn119
+endif
+
+uptn020 = abs(Open[5]-Close[1]) > 0.7 * (high[5]-low[1])
+uptn042 = Dopen(0)-Dlow(0)<(Dopen(1)-Dlow(1))*1.5
+if TriggerS then
+   PtnMRSY   = 1
+   PtnMRSN   = 0
+   PtnUNMRSY = uptn042
+   PtnUNMRSN = uptn020
+endif
+
+SegnaleS = 0
+if time >= StartTrade and time <= EndTrade then
+   if EntraLong AND TriggerL then
+      If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+         buy PsL Lots at Market
+         if MySLL>0 then
+            set stop %loss MySLL
+         endif
+         if MyTPL>0 then
+            set target %profit MyTPL
+         endif
+      endif
+   endif
+
+   if EntraShort AND TriggerS then
+      If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+         SegnaleS = 1
+      endif
+   endif
+endif
+
+// --- Ingresso short
+ONCE InAttesa = 0
+ONCE BarraSegnale = 0
+
+IF UsaM4 = 0 THEN
+   IF SegnaleS = 1 THEN
+      sellshort PsS Lots at Market
+      if MySLS>0 then
+         set stop %loss MySLS
+      endif
+      if MyTPS>0 then
+         set target %profit MyTPS
+      endif
+   ENDIF
+ELSE
+   IF SegnaleS = 1 THEN
+      InAttesa = 1
+      BarraSegnale = barindex
+   ENDIF
+   IF InAttesa = 1 AND barindex - BarraSegnale >= RitardoIngresso AND NOT ShortOnMarket THEN
+      sellshort PsSIngresso Lots at Market
+      set stop %loss MySLS
+      set target %profit MyTPS
+      InAttesa = 0
+   ENDIF
+ENDIF
+
+// --- Uscite
+ExitL =LongOnMarket  AND DayOfWeek=3 AND (Time=130000 OR barindex-tradeindex>69)
+If longonmarket and barindex-tradeindex>69 then
+   sell at market
+endif
+If ExitL then
+   sell at market
+endif
+
+IF UsaM4 = 0 THEN
+   ExitS =ShortOnMarket AND DayOfWeek=5 AND (Time=170000 OR barindex-tradeindex>51)
+   If shortonmarket and barindex-tradeindex>51 then
+      exitshort at market
+   endif
+ELSE
+   // venerdì all'ora scelta; mai nel fine settimana
+   ExitS = ShortOnMarket AND ((DayOfWeek=5 AND Hour >= OraUscitaS) OR DayOfWeek=6 OR DayOfWeek=0)
+ENDIF
+If ExitS then
+   exitshort at market
+endif
+
+// --- Controlli (solo backtest)
+GRAPH PsSIngresso AS "contratti short"

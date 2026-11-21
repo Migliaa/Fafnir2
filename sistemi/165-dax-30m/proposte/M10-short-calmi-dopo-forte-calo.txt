@@ -1,0 +1,187 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M10 (sopra la versione C2 = originale + M5 + M8 + M9)
+// Via di mezzo per gli short dei periodi calmi: solo se la mattina è scesa molto
+//
+// Ipotesi. M5 tiene solo gli short dei periodi agitati: nei periodi calmi lo short
+// guadagnava 7,12 € a trade, meno dei costi reali. Ma gli short calmi non sono tutti
+// uguali: il momento intraday dipende dalle coperture di chi ha esposizione gamma
+// negativa, e queste crescono con l'ampiezza del movimento (Baltussen et al. 2021).
+// In M4, su tutti i periodi, gli short dopo una mattina in forte calo guadagnavano 21,75 €
+// contro 12,53 € degli altri. Qui, nei periodi calmi, lo short si apre solo se il prezzo
+// è sceso dalla chiusura di ieri di almeno SogliaMossa escursioni medie giornaliere;
+// nei periodi agitati non cambia nulla. È la via di mezzo tra "tutti gli short" e
+// "solo quelli agitati" senza aumentare i contratti.
+// Direzione attesa: gli short aggiunti guadagnano almeno 15 € a trade.
+// Con PesoCalmi si può dare a questi short una posizione più piccola (0.5 = metà).
+// UsaM10 = 0 riproduce la versione di produzione con le impostazioni del test.
+//
+// Varianti: SogliaMossa 0.5 (proposta), 0.25. Prima con PesoCalmi = 1, che serve a
+// misurare; PesoCalmi = 0.5 solo se gli short aggiunti guadagnano tra 8 e 15 € a trade.
+// Come provarlo: lanciare questo file due volte, UsaM10 = 1 e UsaM10 = 0: la seconda è
+// il riferimento (non l'originale). L'intestazione ha i valori del test: contratti fissi
+// e pesi a 1. Report delle sole posizioni short.
+// Come giudicarlo: guadagno medio degli short aggiunti =
+//   (profitto short M10 - profitto short riferimento) / (trade M10 - trade riferimento)
+// Gli short aggiunti saranno probabilmente meno di 100: con una dispersione di circa
+// 100 € a trade, l'incertezza sul loro guadagno medio è di circa ±10-15 €.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 5000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (valuta del DAX e di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000     // PER IL TEST: capitale del backtest
+ProfittoPrecedente  = 0        // PER IL TEST
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // 1 = posizione proporzionale al capitale attuale; 0 = contratti fissi
+Leva                = 3        // con Reinvesti = 1: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 1        // con Reinvesti = 0: contratti a peso 1
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5      // PER IL TEST (con PesoCalmi = 0.5)
+MaxContratti        = 80
+ValorePerPunto      = 1        // euro per punto di 1 contratto (Germany 40 Cash 1 €)
+//
+// Pesi. Con Reinvesti = 0 e pesi a 1 il drawdown massimo del backtest 2015-2026 è
+// circa 1.300 € sul long e 740 € sullo short: PesoShort = 1,8 li rende uguali.
+// 1,33 è il rapporto provato in M8 (leva 3 sul long, 4 sullo short).
+// Leva 3 con 7.600 € e il DAX a 26.700 vale 0,85 contratti: finché il capitale non
+// supera circa 8.900 € la posizione la decide il minimo di 1 contratto.
+//=========================================================================
+
+// --- Parametri M10
+UsaM10      = 1                // 0 = versione di produzione, 1 = modulo attivo
+SogliaMossa = 0.5              // calo minimo dalla chiusura di ieri, in escursioni medie giornaliere
+PesoCalmi   = 1                // moltiplicatore della posizione per gli short aggiunti
+
+// --- Parametri della strategia
+EntraLong   = 1
+EntraShort  = 1
+ShortLunedi = 1                // M9: short anche il lunedì
+SogliaVolS  = 1.0              // M5: short solo se volatilità 2 settimane / 5 mesi >= soglia
+TargetShortVolatilita = 0      // M7: 1 = target dello short pari all'escursione media giornaliera
+                               // (provato: non migliora rispetto all'1,4% e alza il drawdown)
+
+MySLL = 3
+MyTPL = 3.5
+MySLS = 2.5
+MyTPS = 1.4
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve  = AverageTrueRange[10](close)
+VolLunga  = AverageTrueRange[100](close)
+ATRGiorno = AverageTrueRange[20](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+MossaGiorno = 0
+IF ATRGiorno > 0 THEN
+   MossaGiorno = (close - DClose(1)) / ATRGiorno
+ENDIF
+CalmoForte = 0
+IF UsaM10 = 1 AND Agitato = 0 AND MossaGiorno <= -SogliaMossa THEN
+   CalmoForte = 1
+ENDIF
+
+// --- Capitale attuale, freno e posizioni
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   ContrattiBase = ContrattiFissi
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Segnali
+GiornoShortOk = dayofweek >= 2 AND dayofweek <= 5
+IF ShortLunedi = 1 THEN
+   GiornoShortOk = dayofweek >= 1 AND dayofweek <= 5
+ENDIF
+
+time2tradeL = time = 133000 and dayofweek <> 5
+time2tradeS = time = 123000 and GiornoShortOk
+TriggerL = close > exponentialaverage[25](close)
+TriggerS = close < exponentialaverage[25](close)
+
+PatternL = rsi[2](close) > 65
+PatternS = not (dlow(1) > dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+PsCalmi = max(MinContratti, PsS * PesoCalmi)
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND CalmoForte then
+sellshort PsCalmi Lots at market
+endif
+
+// --- Uscite
+ExitL = (time = 080000) or (dayofweek = 5 and time = 210000)
+ExitS = Barindex - tradeindex > 12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+
+If LongOnMarket AND MySLL > 0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS > 0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL > 0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS > 0 then
+IF TargetShortVolatilita = 1 AND ATRGiorno > 0 THEN
+set target profit ATRGiorno
+ELSE
+set target %profit MyTPS
+ENDIF
+endif

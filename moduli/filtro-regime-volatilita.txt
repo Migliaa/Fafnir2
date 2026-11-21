@@ -1,0 +1,29 @@
+// MODULO: filtro sul regime di volatilità
+// Validato su: 165 DAX 30m (M5), short 2015-2026 a 1 contratto: guadagno medio da 18,07
+//              a 31,38 €, drawdown da -1.377,60 a -707,50 €, 238 short tenuti su 527;
+//              gli short scartati guadagnavano 7,12 € a trade. Approvato da Andrea il
+//              2026-11-20. Sul long dello stesso sistema non adottato: i long calmi erano
+//              positivi e tenevano regolare la curva.
+// Quando usarlo: gambe il cui vantaggio dipende dal proseguire del movimento della
+//              giornata (momento intraday), che è più forte nei periodi agitati
+//              (Gao et al. 2018, Li-Sakkas-Urquhart 2022, Baltussen et al. 2021).
+//              Non su sistemi di calendario senza un legame con la volatilità.
+// Richiede: grafico intraday; DEFPARAM PreLoadBars = 5000 sul 30 minuti.
+// Produce:  Agitato (1 = volatilità recente sopra quella di lungo periodo); va messo
+//           in AND con la condizione d'ingresso della gamba da filtrare.
+// Si giudica sul guadagno medio dei trade scartati, non sul profitto totale.
+
+SogliaVol = 1.0            // volatilità 2 settimane / volatilità 5 mesi circa
+
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVol
+
+// Esempio: if EntraShort AND ... AND Agitato then sellshort PsS Lots at market

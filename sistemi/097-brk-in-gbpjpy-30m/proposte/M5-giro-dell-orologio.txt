@@ -1,0 +1,233 @@
+//-------------------------------------------------------------------------
+// 097 BRK IN GBPJPY 30m  |  M5, tentativo 1 di 4: GIRO DELL'OROLOGIO
+// Grafico: GBP/JPY mini (10.000 GBP, 100 yen per pip), 30 minuti, orari italiani.
+//
+// L'idea. GBP/JPY è un cross di carry: dal 1999 al 2023 i cross di questo tipo sono
+// scesi dalla chiusura di New York (23:00) fino alla prima parte del pomeriggio
+// europeo e sono saliti nelle ore americane, fino alle 23:00 (Krohn-Mueller-Whelan,
+// due paper, fonti/prodotti/gbpjpy.md A1 e A6). Il sistema di Andrea ha già un lato
+// per ciascuna metà: il long 10:30-22:00 nella metà favorevole ai rialzi, lo short
+// spento 01:00-10:30 in quella favorevole ai ribassi. M3 ha confermato nella
+// direzione il tratto 17:00-22:00 del long; lo short ha guadagnato in sei anni su sette.
+// M5 fa girare i due lati insieme, tutti e due solo di giorno (niente posizioni tra le
+// 22:00 e l'01:00, le ore dei crolli improvvisi), con tre cambiamenti forti:
+//
+// 1. Short attivo, con il livello reso esplicito. Nell'originale lo short vende
+//    all'01:00 sotto LivelloLow, che però si aggiorna alle 03:30: è il minimo della
+//    notte asiatica del GIORNO PRIMA. Quindi vende se il prezzo è sceso sotto il
+//    minimo asiatico di ieri, cioè dopo 24 ore di calo, nelle ore in cui i cross di
+//    carry scendono e in cui le società giapponesi chiudono d'ufficio le posizioni
+//    in perdita dei clienti (fonti/prodotti/gbpjpy.md, B5). Qui il livello è scritto
+//    come tale, con gli stessi filtri dell'originale.
+// 2. Taglia inversa alla volatilità, su entrambi i lati. M1 ha mostrato che i long dei
+//    periodi agitati guadagnano in media quanto quelli calmi, ma con vincenti e
+//    perdenti più grandi: la volatilità aggiunge oscillazione e non guadagno. La
+//    posizione è moltiplicata per volatilità di 5 mesi / volatilità di 2 settimane,
+//    tra 0,5 e 1,5 (moduli/taglia-volatilita-uscita-a-tempo.txt).
+// 3. Orari e stop come numeri decimali da ottimizzare (10.5 = 10:30), con griglie
+//    piccole, più l'interruttore GiorniTutti: i giorni dell'originale (long lunedì e
+//    mercoledì, short martedì, giovedì, venerdì) o tutti i giorni per entrambi.
+// Inoltre IngressoEsplicito = 1: se all'ora d'ingresso il livello è già superato si
+// entra al mercato, così in reale IG non può rifiutare un ordine stop dal lato sbagliato.
+//
+// UsaM5 = 0 spegne tutto e riproduce C0: solo il long dell'originale, 15.000 yen a
+// stop pieno (2.000.000 yen di posizione). È il riferimento mancante anche per M1-M4.
+//
+// COME PROVARLO (report long, short e tutte le posizioni)
+// a) UsaM5 = 0: riferimento.
+// b) UsaM5 = 1 con i valori del file: i due lati dell'originale con la taglia a
+//    volatilità e l'ingresso esplicito.
+// c) Come b) con GiorniTutti = 1.
+// d) Facoltativo, ottimizzazione: un lato alla volta (l'altro con EntraLong o
+//    EntraShort = 0), togliendo dal codice le righe delle tre variabili del lato e
+//    mettendole nel pannello di ottimizzazione con gli estremi e i passi indicati
+//    accanto: 7 x 6 x 4 = 168 combinazioni per il long, 6 x 5 x 5 = 150 per lo short.
+//    Il rischio per trade resta fisso: uno stop più stretto vuol dire una posizione
+//    più grande. Con 7 anni di dati, meglio ottimizzare fino a fine 2024 e guardare
+//    2025-2026 senza toccarli, oppure usare il walk forward di ProBacktest; scegliere
+//    un valore al centro di una zona dove anche i vicini vanno bene, non il picco.
+// COME GIUDICARLO
+// - b) contro a), lato long: stessi trade; la taglia a volatilità deve abbassare il
+//   drawdown più di quanto abbassa il profitto (rapporto profitto / drawdown più alto).
+// - b), lato short: profit factor, anni in perdita (il 2026 dell'originale è a
+//   -26.280 yen) e drawdown rispetto al long.
+// - c) contro b): guadagno medio dei trade aggiunti = differenza di profitto /
+//   differenza di trade, lato per lato. Se i giorni aggiunti rendono come gli altri,
+//   il vantaggio è dell'orario e non del giorno; se rendono meno, i giorni
+//   dell'originale contengono il ciclo settimanale dello yen (M6).
+// - Tutte le posizioni: il drawdown del sistema intero deve essere più basso della
+//   somma dei due lati, perché i lati non sono mai aperti insieme.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 6000
+
+UsaM5 = 1                      // 0 = C0 (solo long dell'originale); 1 = giro dell'orologio
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in yen, la valuta di StrategyProfit su GBP/JPY
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA (in yen)
+//    Primo avvio: CapitaleVersato = soldi messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 1000000  // PER IL TEST
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop
+RischioLong         = 1.5      // PER IL TEST: 15.000 yen con stop 0,75% = 2.000.000 di posizione
+RischioShort        = 2        // PER IL TEST: 20.000 yen con stop 1% = 2.000.000 di posizione
+
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5      // verificare il minimo di IG sul mini
+MaxContratti        = 80
+ValorePerPunto      = 10000    // yen per 1,00 di prezzo, 1 contratto mini (10.000 GBP)
+//
+// Con la taglia a volatilità il rischio vero va dalla metà a una volta e mezza di
+// quello scritto: meno nei periodi agitati, di più in quelli calmi.
+//=========================================================================
+
+// --- Interruttori
+EntraLong          = 1
+EntraShort         = 1
+TagliaVol          = 1         // 1 = posizione x volatilità 5 mesi / 2 settimane, tra 0,5 e 1,5
+GiorniTutti        = 0         // 0 = long lun e mer, short mar, gio, ven; 1 = lun-ven per entrambi
+IngressoEsplicito  = 1         // 1 = al mercato se all'ora d'ingresso il livello è già superato
+DistanzaMinima     = 0         // con IngressoEsplicito = 1: al mercato anche se manca meno di
+                               // questo al livello (in yen di prezzo: 0.05 = 5 pip)
+
+// --- Variabili da ottimizzare (ore decimali: 10.5 = 10:30)
+OraIngressoL = 10.5            // ottimizzazione: da 9.5 a 12.5, passo 0.5
+OraUscitaL   = 22              // da 20 a 22.5, passo 0.5
+MySLL        = 0.75            // stop long, % del prezzo; da 0.5 a 1.25, passo 0.25
+OraIngressoS = 1               // da 0.5 a 3, passo 0.5 (deve restare prima delle 3.5)
+OraUscitaS   = 10.5            // da 8.5 a 12.5, passo 1
+MySLS        = 1               // stop short; da 0.5 a 1.5, passo 0.25
+
+// --- Parametri fissi (come l'originale)
+OraLivello   = 3.5             // fine della notte asiatica: massimo e minimo della giornata fin qui
+MyTPL        = 2               // target long, %
+MyTPS        = 5.5             // target short, %
+
+// --- Con UsaM5 = 0 tutto torna all'originale (C0)
+IF UsaM5 = 0 THEN
+   EntraShort        = 0
+   TagliaVol         = 0
+   GiorniTutti       = 0
+   IngressoEsplicito = 0
+   OraIngressoL      = 10.5
+   OraUscitaL        = 22
+   MySLL             = 0.75
+ENDIF
+
+BarreMaxL = 22
+BarreMaxS = 18
+IF UsaM5 = 1 THEN
+   BarreMaxL = 2 * (OraUscitaL - OraIngressoL) + 1
+   BarreMaxS = 2 * (OraUscitaS - OraIngressoS) + 1
+ENDIF
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+FattoreVol = 1
+IF TagliaVol = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreVol = max(0.5, min(1.5, VolLunga / VolBreve))
+ENDIF
+
+// --- Posizioni (dalla console)
+StopL = MySLL / 100
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioYenL = max(0, CapitaleBase) * RischioLong / 100
+RischioYenS = max(0, CapitaleBase) * RischioShort / 100
+
+PsL = max(MinContratti, min(MaxContratti, RischioYenL / (close * StopL * ValorePerPunto) * FattoreVol))
+PsS = max(MinContratti, min(MaxContratti, RischioYenS / (close * StopS * ValorePerPunto) * FattoreVol))
+
+// --- Ora della barra in decimali (ora di chiusura, come Time)
+OraBarra = Hour + Minute / 60
+
+// --- Massimo e minimo della notte asiatica: prima delle 03:30 restano quelli di ieri
+IF ABS(OraBarra - OraLivello) < 0.01 THEN
+   LivelloHigh = DHigh(0)
+   LivelloLow  = DLow(0)
+ENDIF
+
+// --- Segnali
+TriggerL = ABS(OraBarra - OraIngressoL) < 0.01
+TriggerS = ABS(OraBarra - OraIngressoS) < 0.01
+
+IF GiorniTutti = 1 THEN
+   GiorniL = DayOfWeek >= 1 AND DayOfWeek <= 5
+   GiorniS = DayOfWeek >= 1 AND DayOfWeek <= 5
+ELSE
+   GiorniL = DayOfWeek = 1 OR DayOfWeek = 3
+   GiorniS = DayOfWeek = 2 OR DayOfWeek = 4 OR DayOfWeek = 5
+ENDIF
+
+IF Day = 24 AND Month = 6 AND Year = 2016 THEN
+   TriggerL = 0
+   TriggerS = 0
+ENDIF
+
+// long (originale): niente long se l'apertura di Londra (09:00-09:30) è stata più calma
+// della mezz'ora prima e la mezz'ora dopo non si è allargata
+uptn133 = (High[1] - Low[1] < (High[2] - Low[2]) * 1.1) AND ((High[2] - Low[2]) < (High[3] - Low[3]) * 0.75)
+
+// short (originale): escursione della giornata finora sotto lo 0,9%, e niente short se
+// l'ultima barra ha appena fatto un minimo più basso delle tre precedenti
+uptn068 = DHigh(0) < DLow(0) + DLow(0) * 0.009
+uptn114 = (Low[1] < Low[2]) AND (Low[1] < Low[3]) AND (Low[1] < Low[4])
+
+// --- Ingresso long: rottura del massimo della notte
+IF EntraLong AND TriggerL AND GiorniL AND NOT uptn133 AND LivelloHigh > 0 THEN
+   IF IngressoEsplicito = 1 AND close >= LivelloHigh - DistanzaMinima THEN
+      BUY PsL LOTS AT MARKET
+   ELSE
+      BUY PsL LOTS AT LivelloHigh STOP
+   ENDIF
+   SET STOP %LOSS MySLL
+   SET TARGET %PROFIT MyTPL
+ENDIF
+
+// --- Ingresso short: sotto il minimo della notte asiatica di ieri
+IF EntraShort AND TriggerS AND GiorniS AND uptn068 AND NOT uptn114 AND LivelloLow > 0 THEN
+   IF IngressoEsplicito = 1 AND close <= LivelloLow + DistanzaMinima THEN
+      SELLSHORT PsS LOTS AT MARKET
+   ELSE
+      SELLSHORT PsS LOTS AT LivelloLow STOP
+   ENDIF
+   SET STOP %LOSS MySLS
+   SET TARGET %PROFIT MyTPS
+ENDIF
+
+// --- Uscite a orario (o dopo il numero massimo di barre)
+IF LongOnMarket AND (ABS(OraBarra - OraUscitaL) < 0.01 OR BarIndex - TradeIndex > BarreMaxL) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (ABS(OraBarra - OraUscitaS) < 0.01 OR BarIndex - TradeIndex > BarreMaxS) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest (togli prima del reale)
+GRAPH FattoreVol AS "fattore di volatilità"
+GRAPH PsL AS "contratti long"

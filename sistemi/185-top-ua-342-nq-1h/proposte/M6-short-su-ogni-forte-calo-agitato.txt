@@ -1,0 +1,210 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 NQ 1H  |  MODULO M6  (seconda tornata, sopra C0)
+// Short su ogni forte calo della seduta americana nei periodi agitati
+//
+// Da dove viene. La prima tornata ha detto due cose dello short. Guadagna 60 € a trade
+// nelle ore fino alla chiusura americana e 99 € nei giorni successivi (M2): il calo
+// prosegue per giorni, come sull'oro. E guadagna 242 € a trade nei periodi agitati
+// contro 100 € in quelli calmi (M3): il momento è più forte quando la volatilità è alta,
+// come sugli short del DAX e su oltre 60 futures (Baltussen et al. 2021; fonti/prodotti/
+// nasdaq.md, A2). Il pattern dell'originale (ieri chiusura nel 20% più alto
+// dell'escursione) viene dalla libreria di pattern e non ha una ragione economica nota;
+// limita lo short a 9 trade l'anno.
+// Ipotesi. Nei periodi agitati un calo dall'apertura di almeno 4 escursioni orarie medie
+// durante la seduta americana prosegue nei giorni successivi anche senza il pattern.
+// Qui si aggiungono quegli short, solo quando non c'è già una posizione aperta, così i
+// long del lunedì restano identici e il report dei long non cambia. Gli short
+// dell'originale restano tutti.
+// Direzione attesa: short aggiunti con guadagno medio positivo, più basso dei 242 € degli
+// short agitati con il pattern ma sopra i 100 € di quelli calmi; più trade, drawdown
+// dello short più alto meno che in proporzione al profitto.
+//
+// Varianti:
+//   SoloAgitatiM6 = 1, TargetShortM6 = 1.6   (proposta)
+//   SoloAgitatiM6 = 0                         short aggiunti anche nei periodi calmi
+//   TargetShortM6 = 3                         target più lontano per tutti gli short: il
+//                                             miglior short del riferimento è proprio il
+//                                             target (480 €) e il guadagno sta nei giorni
+//                                             dopo. Su 165 DAX allargare il target non ha
+//                                             aiutato (M7), ma lì lo short durava 7 ore.
+// Come provarlo: UsaM6 = 1 e UsaM6 = 0; il riferimento è già noto dalla prima tornata
+// (short: 89 trade, 158,87 € a trade, 14.139 €, drawdown −2.021 €), quindi basta lanciare
+// UsaM6 = 1. Report short; controllare che il report long non sia cambiato.
+// Come giudicarlo: guadagno medio degli short aggiunti =
+//   (profitto M6 - 14.139) / (trade M6 - 89)
+// e profitto / drawdown dello short, contro 7,0. Aggiunge esposizione: conta che il
+// drawdown cresca meno del profitto.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (US Tech 100 Cash da 1 €, valuta di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // 1 = posizione proporzionale al capitale attuale; 0 = non cresce con i profitti
+Leva                = 6        // PER IL TEST: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 0        // con Reinvesti = 0: contratti a peso 1; 0 = valore fisso Leva × Capitale
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // PER IL TEST (originale: 2, cioè rischio dell'8% invece del 4%)
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // valore di 1 punto per 1 contratto (US Tech 100 Cash 1 € -> 1)
+//
+// PER IL TEST: 6 × 5.000 = posizione da 30.000 in ogni trade, circa 1 contratto ai
+// prezzi di oggi e 7 nel 2016, così ogni anno pesa allo stesso modo e il minimo di 0,5
+// contratti non scatta mai; un trade che arriva allo stop del 4% perde 1.200. Con
+// Reinvesti = 0 il capitale del backtest non entra nei calcoli: se ProRealTime ferma il
+// backtest per capitale insufficiente, alzalo.
+//=========================================================================
+
+// --- Parametri M6
+UsaM6          = 1             // 0 = come C0, 1 = modulo attivo
+SoloAgitatiM6  = 1             // 1 = short aggiunti solo nei periodi agitati
+SogliaM6       = 1.0           // volatilità 2 settimane / volatilità 5 mesi
+TargetShortM6  = 1.6           // target di tutti gli short con M6 attivo (originale 1,6)
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)     // ultime 2 settimane
+VolLunga = AverageTrueRange[100](close)    // ultimi 5 mesi circa
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+
+// --- Parametri della strategia (come l'originale)
+EntraLong     = 1
+EntraShort    = 1
+
+MySLL         = 4          // stop long, % del prezzo
+MySLS         = 4          // stop short
+MyTPL         = 2.5        // target long
+MyTPS         = 1.6        // target short
+
+MyStartTradeL = 080000
+MyEndTradeL   = 200000
+MyStartTradeS = 160000
+MyEndTradeS   = 200000
+PortATRMeno   = 4          // calo minimo dall'apertura della giornata, in escursioni medie orarie
+BarreUscitaL  = 90
+BarreUscitaS  = 100
+MaxDayInTradeL = 8          // giorni in posizione (contati come nell'originale)
+MaxDayInTradeS = 4
+ONCE DayInTrade = 0
+
+// --- Capitale attuale, freno e posizioni
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   IF ContrattiFissi > 0 THEN
+      ContrattiBase = ContrattiFissi
+   ELSE
+      ContrattiBase = Leva * Capitale / (close * ValorePerPunto)
+   ENDIF
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Segnali
+GiornoLong = dayofweek = 1
+
+shortAvg  = Average[5](close)
+shortAvg2 = Average[10](close)
+iptn18    = shortAvg crosses over shortAvg2 and close > (shortAvg * 0.99)
+
+uptn116    = (dhigh(1) - dclose(1)) < 0.20 * (dhigh(1) - dlow(1))
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[20](close)
+
+// --- M6: short aggiunti sui forti cali senza il pattern dell'originale
+ShortAggiunto = 0
+IF UsaM6 = 1 AND MyTriggerS AND NOT uptn116 AND NOT OnMarket THEN
+   IF SoloAgitatiM6 = 0 OR RegimeVol >= SogliaM6 THEN
+      ShortAggiunto = 1
+   ENDIF
+ENDIF
+TPS = MyTPS
+IF UsaM6 = 1 THEN
+   TPS = TargetShortM6
+ENDIF
+
+// --- Ingressi
+IF time >= MyStartTradeL AND time <= MyEndTradeL THEN
+   IF EntraLong AND iptn18 AND GiornoLong THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+ENDIF
+
+IF time >= MyStartTradeS AND time <= MyEndTradeS THEN
+   IF EntraShort AND MyTriggerS AND (uptn116 OR ShortAggiunto) THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT TPS
+   ENDIF
+ENDIF
+
+// --- Uscite
+// giorni in posizione, come l'originale: il contatore riparte solo quando si passa da
+// fuori a dentro il mercato, quindi uno short che inverte un long eredita i giorni del long
+IF OnMarket <> OnMarket[1] THEN
+   DayInTrade = 0
+ENDIF
+IF OnMarket AND (Day > Day[1] OR (DayInTrade > 3 AND DayOfWeek < 1)) THEN
+   DayInTrade = DayInTrade + 1
+ENDIF
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL AND MaxDayInTradeL > 0 THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS AND MaxDayInTradeS > 0 THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+FineSettimana = dayofweek = 5 AND time = 210000
+
+IF LongOnMarket AND (barindex - tradeindex > BarreUscitaL OR FineSettimana) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (barindex - tradeindex > BarreUscitaS OR FineSettimana) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH RegimeVol AS "volatilità 2 settimane / 5 mesi"
+GRAPH ShortAggiunto AS "short aggiunto"

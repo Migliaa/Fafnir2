@@ -1,0 +1,153 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M3
+// Stop e target che si allargano e stringono con la volatilità, a rischio costante
+//
+// Le distanze restano quelle calibrate da te (MySLL, MySLS, MyTPL, MyTPS) quando la
+// volatilità è nella media; vengono moltiplicate per il rapporto
+// volatilità ultima settimana / volatilità ultimi mesi. Non ci sono nuovi
+// parametri da ottimizzare sugli stop.
+// La taglia è ricalcolata sulla distanza effettiva dello stop, come fa già la tua
+// formula: la perdita a stop resta quella dell'originale, cambia solo quanto
+// rumore il trade sopporta prima di uscire.
+// UsaM3 = 0 riproduce esattamente l'originale con Reinvest = 0.
+// Fonti: Kaminski-Lo 2014 (quando uno stop toglie valore), Harvey et al. 2018.
+// ATTENZIONE: non combinare con M2 (stessa leva).
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+UsaM3 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+// --- Parametri M3
+BarreVolBreve  = 120      // circa 1 settimana di barre orarie
+BarreVolLunga  = 2000     // circa 4 mesi di barre orarie
+RapportoMin    = 0.6      // limiti al rapporto, per evitare stop assurdi
+RapportoMax    = 1.8
+ScalaTarget    = 1        // 1 = scala anche i target; 0 = scala solo gli stop
+
+VolBreve = AverageTrueRange[BarreVolBreve](close)
+VolLunga = AverageTrueRange[BarreVolLunga](close)
+
+RapportoVol = 1
+IF UsaM3 = 1 AND VolLunga > 0 THEN
+   RapportoVol = max(RapportoMin, min(RapportoMax, VolBreve / VolLunga))
+ENDIF
+
+RapportoTP = 1
+IF ScalaTarget = 1 THEN
+   RapportoTP = RapportoVol
+ENDIF
+
+// Distanze in prezzo (con UsaM3 = 0 coincidono con le % dell'originale)
+DistSLL = close * (MySLL / 100) * RapportoVol
+DistSLS = close * (MySLS / 100) * RapportoVol
+DistTPL = close * (MyTPL / 100) * RapportoTP
+DistTPS = close * (MyTPS / 100) * RapportoTP
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000
+RiskOnCapital       = 0.15
+MaxPosition         = 80
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+// Stessa formula dell'originale, con la distanza effettiva dello stop
+PsL = RiskCapitalBase / (DistSLL * 3)
+PsS = RiskCapitalBase / DistSLS
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop loss DistSLL
+endif
+if MyTPL>0 then
+set target profit DistTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop loss DistSLS
+endif
+if MyTPS>0 then
+set target profit DistTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and barindex-tradeindex>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif

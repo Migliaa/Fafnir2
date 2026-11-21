@@ -1,0 +1,221 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 GC 1H  |  MODULO M2
+// Operare solo quando la volatilità recente è sopra quella di lungo periodo
+//
+// Ipotesi. Le due gambe comprano e vendono dopo un movimento ampio della giornata, cioè
+// scommettono che il movimento prosegua. Il momento è più forte nei periodi agitati su
+// oltre 60 futures, materie prime comprese (Baltussen et al. 2021), e sull'oro la
+// volatilità sale più dopo i rialzi che dopo i ribassi (Baur 2012, Todorova 2017): le
+// rotture al rialzo arrivano a ondate. Sugli short del DAX lo stesso filtro ha diviso
+// trade da 31 € e da 7 € (moduli/filtro-regime-volatilita.txt). Qui un trade parte solo
+// se l'escursione media giornaliera delle ultime 2 settimane è almeno SogliaM2 volte
+// quella degli ultimi 5 mesi circa.
+// È anche il test che dice che tipo di vantaggio hanno le gambe (principio 1 di
+// idee/idee-di-trading.md) e serve per leggere M4: se il guadagno per trade cresce con la
+// volatilità più del rischio, ridurre la taglia nei periodi agitati è sbagliato.
+// Direzione attesa: per entrambi i lati, guadagno medio dei trade tenuti più alto di
+// quello dei trade scartati. La barra oraria dello 0,5% richiesta dall'originale scarta
+// già molti periodi calmi, quindi i trade tenuti dovrebbero essere più della metà.
+// UsaM2 = 0 riproduce l'originale a 1 contratto (BuyLot = 0), salvo i primi giorni del
+// backtest per le barre precaricate.
+//
+// Varianti: SogliaM2 1.0 (proposta), 0.8 (scarta solo i periodi molto calmi), 1.2.
+// Come provarlo: lanciare UsaM2 = 1 e UsaM2 = 0 (riferimento, lo stesso di M1 e M3),
+// report long e short separati.
+// Come giudicarlo, per ciascun lato: guadagno medio dei trade scartati =
+//   (profitto riferimento - profitto M2) / (trade riferimento - trade M2)
+// M2 funziona su un lato se questo valore è vicino a zero o negativo mentre quello dei
+// tenuti sale, e se la differenza supera l'incertezza ricavata da vincente e perdente
+// medio. Conta anche la curva: su 165 DAX il filtro è stato scartato sul long perché i
+// long calmi erano positivi e tenevano la curva regolare.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 5000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in dollari (valuta dell'oro e di StrategyProfit)
+//
+// Primo avvio:  Capitale = dollari del conto destinati al sistema (gli euro convertiti
+//               al cambio del giorno), ProfittoPrecedente e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 4000     // PER IL TEST: capitale del backtest, in dollari
+ProfittoPrecedente  = 0        // PER IL TEST (originale: 200)
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // PER IL TEST: contratti fissi; 1 = posizione proporzionale al capitale attuale
+Leva                = 4        // con Reinvesti = 1: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 1        // con Reinvesti = 0: contratti a peso 1
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // dollari per 1 $ di movimento di 1 contratto (Spot Gold $1 di IG)
+//
+// Leva 4 vale circa il 4% di rischio dell'originale con uno stop all'1%: quale delle due
+// formule tenere lo decide M4.
+//=========================================================================
+
+// --- Parametri M2
+UsaM2          = 1             // 0 = originale, 1 = modulo attivo
+SogliaM2       = 1.0           // volatilità 2 settimane / volatilità 5 mesi
+ApplicaLongM2  = 1
+ApplicaShortM2 = 1
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)     // ultime 2 settimane
+VolLunga = AverageTrueRange[100](close)    // ultimi 5 mesi circa
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+
+FiltroL = 1
+FiltroS = 1
+IF UsaM2 = 1 AND RegimeVol < SogliaM2 THEN
+   IF ApplicaLongM2 = 1 THEN
+      FiltroL = 0
+   ENDIF
+   IF ApplicaShortM2 = 1 THEN
+      FiltroS = 0
+   ENDIF
+ENDIF
+
+// --- Parametri della strategia (come l'originale)
+EntraLong       = 1
+EntraShort      = 1
+Escludi2011     = 1            // 1 = come l'originale (niente trade da giugno a novembre 2011)
+
+SLmultL   = 3
+SLmultS   = 3
+TPmultL   = 13
+TPmultS   = 0
+ATRperiod = 20
+
+MyStartTrade     = 110000
+MyEndTrade       = 220000
+MaxDayInTradeL   = 4
+MaxDayInTradeS   = 4
+PortATRpiu       = 2.5
+PortATRMeno      = 5.5
+Once DayInTrade  = 0
+
+// --- Stop e target in percentuale, legati all'escursione media delle ultime 20 ore
+ATRpts = AverageTrueRange[ATRperiod](close)
+MySLL = (SLmultL * ATRpts) / close * 100
+MySLS = (SLmultS * ATRpts) / close * 100
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+
+// --- Capitale attuale, freno e posizioni (intestazione standard)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   ContrattiBase = ContrattiFissi
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Ingressi (come l'originale, più il filtro M2)
+Time2Trade = 1
+IF Escludi2011 = 1 AND Year = 2011 AND Month >= 6 AND Month <= 11 THEN
+   Time2Trade = 0
+ENDIF
+
+IF Time2Trade THEN
+
+MyTriggerL = close > DOpen(0) + PortATRpiu  * AverageTrueRange[200](close)
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[200](close)
+
+ptnl25 = high[0] > (high[1] + high[1] * 0.5 * 0.01)
+ptns25 = low[0] < (low[1] - low[1] * 0.5 * 0.01)
+
+uptn104 = Dlow(0) > (Dlow(1) + Dlow(1) * 0.01)
+uptn139 = (Dclose(1) < Dopen(1) AND Dclose(2) > Dopen(2))
+
+IF time >= MyStartTrade AND time <= MyEndTrade THEN
+
+// --- LONG
+IF EntraLong AND MyTriggerL AND ptnl25 AND NOT uptn104 AND FiltroL THEN
+BUY PsL LOTS AT MARKET
+if MySLL > 0 then
+set stop %loss MySLL
+endif
+if MyTPL > 0 then
+set target %profit MyTPL
+endif
+ENDIF
+
+// --- SHORT
+IF EntraShort AND MyTriggerS AND ptns25 AND NOT uptn139 AND FiltroS THEN
+SELLSHORT PsS LOTS AT MARKET
+if MySLS > 0 then
+set stop %loss MySLS
+endif
+if MyTPS > 0 then
+set target %profit MyTPS
+endif
+ENDIF
+ENDIF
+ENDIF
+
+// --- Uscite (come l'originale)
+IF OnMarket <> OnMarket[1] THEN
+DayInTrade = 0
+ENDIF
+
+IF OnMarket AND Day > Day[1] THEN
+DayInTrade = DayInTrade + 1
+ENDIF
+
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL THEN
+SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS THEN
+EXITSHORT AT MARKET
+ENDIF
+
+IF LongOnMarket THEN
+EL0 = barindex - tradeindex > 106 OR (barindex - tradeindex > 80 AND PositionPerf(0) < 0)
+IF EL0 THEN
+SELL AT MARKET
+ENDIF
+ENDIF
+
+IF ShortOnMarket THEN
+ES0 = barindex - tradeindex > 60
+IF ES0 THEN
+EXITSHORT AT MARKET
+ENDIF
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH RegimeVol AS "volatilità 2 settimane / 5 mesi"

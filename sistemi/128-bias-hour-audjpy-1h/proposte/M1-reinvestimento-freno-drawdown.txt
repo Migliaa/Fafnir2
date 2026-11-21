@@ -1,0 +1,144 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M1
+// Reinvestimento a frazione fissa del capitale + freno proporzionale al drawdown
+//
+// Cosa cambia rispetto all'originale: SOLO il blocco INVESTMENT.
+// UsaM1 = 0 riproduce esattamente l'originale con Reinvest = 0.
+// Fonti: Kelly/Thorp (frazione fissa, Kelly frazionario), Grossman-Zhou 1993
+// (esposizione proporzionale al capitale sopra un pavimento legato al massimo).
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+UsaM1 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000    //Capitale iniziale
+RiskOnCapital       = 0.15    //% di rischio sul capitale iniziale
+MaxPosition         = 80      //Max contratti
+
+// --- Parametri M1 (valori tondi, non ottimizzati: provane al massimo 2-3)
+EsponenteCrescita   = 0.5     // 1 = taglia proporzionale al capitale; 0.5 = alla sua radice; 0 = nessun reinvestimento
+FrenoDD             = 1       // 1 = riduci la taglia mentre sei sotto il massimo di capitale
+MaxDD               = 0.30    // drawdown dal massimo a cui la taglia arriva al minimo
+FattoreMinimo       = 0.25    // taglia minima durante il drawdown, come frazione della taglia piena
+
+ONCE PiccoCapitale  = InitCapital
+CapitaleAttuale     = InitCapital + StrategyProfit
+PiccoCapitale       = max(PiccoCapitale, CapitaleAttuale)
+
+FattoreM1 = 1
+IF UsaM1 = 1 THEN
+   // crescita: (capitale / capitale iniziale) ^ esponente
+   IF CapitaleAttuale > 0 THEN
+      FattoreM1 = EXP(EsponenteCrescita * LOG(CapitaleAttuale / InitCapital))
+   ENDIF
+   // freno: 1 sul massimo di capitale, scende linearmente fino a FattoreMinimo a -MaxDD
+   IF FrenoDD = 1 THEN
+      Cuscinetto = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+      Cuscinetto = max(FattoreMinimo, min(1, Cuscinetto))
+      FattoreM1  = FattoreM1 * Cuscinetto
+   ENDIF
+ENDIF
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+// Stessa formula dell'originale, moltiplicata per il fattore di capitale
+PsL = (RiskCapitalBase / ((close * (MySLL / 100)) * 3)) * FattoreM1
+PsS = (RiskCapitalBase / (close * (MySLS / 100))) * FattoreM1
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and barindex-tradeindex>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif

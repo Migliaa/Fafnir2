@@ -1,0 +1,168 @@
+//-------------------------------------------------------------------------
+// 097 BRK IN GBPJPY 30m  |  MODULO M1 (sopra C0)
+// Long solo nei periodi agitati
+//
+// Ipotesi. Il long compra la rottura del massimo della notte asiatica durante la
+// mattina di Londra ed esce a sera: è momento intraday, che sulle valute e su oltre 60
+// futures è più forte con volatilità alta, perché chi fornisce liquidità chiude le
+// posizioni nella direzione del movimento e lo fa di più quando il mercato è agitato
+// (Elaut-Frömmel-Lampaert 2018; Baltussen et al. 2021; fonti/prodotti/gbpjpy.md, A2).
+// Sugli short del DAX lo stesso filtro ha diviso trade da 31 € e da 7 €
+// (moduli/filtro-regime-volatilita.txt). Nei periodi calmi una rottura di pochi pip
+// sopra un massimo della notte stretto è più spesso rumore che dura poco.
+// Un long parte solo se l'escursione media giornaliera delle ultime 2 settimane è
+// almeno SogliaM1 volte quella degli ultimi 5 mesi circa.
+// Direzione attesa: i long dei periodi calmi guadagnano in media meno di quelli dei
+// periodi agitati.
+// Serve anche a decidere sulla taglia legata alla volatilità: se il guadagno per trade
+// cresce con la volatilità, ridurre la taglia nei periodi agitati toglierebbe i trade
+// migliori (lezione M5 di 165 DAX).
+//
+// Varianti: SogliaM1 1.0 (proposta) e 0.8 (scarta solo i periodi molto calmi);
+// PesoCalmiM1 0 (salta i long calmi, per misurarli) e 0.5 (metà posizione: da
+// lanciare solo se con 0 i long calmi risultano positivi ma deboli).
+// UsaM1 = 0 riproduce C0, salvo i primi mesi del backtest per le barre precaricate.
+// Come provarlo: UsaM1 = 1 e UsaM1 = 0 (riferimento comune a tutta la tornata),
+// report long, taglia del test (2.000.000 yen di posizione, 15.000 yen a stop pieno).
+// Come giudicarlo: guadagno medio dei long scartati =
+//   (profitto riferimento - profitto M1) / (trade riferimento - trade M1),
+// confrontato con il guadagno medio dei tenuti; la differenza conta se supera
+// l'incertezza ricavata da vincente e perdente medio. Conta anche la curva: su 165 DAX
+// il filtro sul long è stato scartato perché i long calmi erano positivi e tenevano
+// la curva regolare.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 6000
+
+UsaM1 = 1                      // 0 = C0, 1 = modulo attivo
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in yen, la valuta di StrategyProfit su GBP/JPY
+//
+// Primo avvio:  Capitale = soldi del conto destinati al sistema, convertiti in yen;
+//               ProfittoPrecedente e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 1000000  // PER IL TEST, in yen
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // PER IL TEST; 1 = posizione proporzionale al capitale attuale
+Leva                = 2        // valore della posizione / capitale, a peso 1
+ContrattiFissi      = 0        // con Reinvesti = 0: contratti a peso 1; 0 = valore fisso Leva × Capitale
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // non usato: il sistema è solo long
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5      // verificare il minimo di IG sul mini
+MaxContratti        = 80
+ValorePerPunto      = 10000    // yen per 1,00 di prezzo, 1 contratto mini (10.000 GBP)
+//
+// Con lo stop allo 0,75% il rischio di uno stop pieno è Leva × 0,75% del capitale:
+// Leva 2 = 1,5%, quanto l'originale con 1 contratto e 6.000 euro.
+//=========================================================================
+
+// --- Parametri della strategia (come C0)
+EntraLong          = 1
+IngressoEsplicito  = 0         // 1 = se alle 10:30 il prezzo è già sopra il livello, compra al mercato
+DistanzaMinima     = 0         // con IngressoEsplicito = 1: compra al mercato anche se il prezzo è
+                               // sotto il livello di meno di questo (in yen di prezzo: 0.05 = 5 pip)
+
+MySLL       = 0.75             // stop, % del prezzo d'ingresso
+MyTPL       = 2                // target
+OraLivello  = 033000           // fine della notte asiatica: massimo della giornata fin qui
+OraIngresso = 103000           // ordine stop alla chiusura di questa barra, valido mezz'ora
+OraUscitaL  = 220000
+BarreMaxL   = 22
+
+// --- Parametri M1 (prova solo 1.0 e 0.8 per la soglia)
+SogliaM1    = 1.0              // volatilità 2 settimane / volatilità 5 mesi circa
+PesoCalmiM1 = 0                // 0 = niente long nei periodi calmi; 0.5 = metà posizione
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+
+FattoreM1 = 1
+IF UsaM1 = 1 AND RegimeVol < SogliaM1 THEN
+   FattoreM1 = PesoCalmiM1
+ENDIF
+
+// --- Capitale attuale, freno e posizioni
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   IF ContrattiFissi > 0 THEN
+      ContrattiBase = ContrattiFissi
+   ELSE
+      ContrattiBase = Leva * Capitale / (close * ValorePerPunto)
+   ENDIF
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno * FattoreM1))
+
+// --- Massimo della notte asiatica
+IF Time = OraLivello THEN
+   LivelloHigh = DHigh(0)
+ENDIF
+
+// --- Segnale (come l'originale)
+TriggerL = Time = OraIngresso
+GiorniL  = DayOfWeek = 1 OR DayOfWeek = 3
+
+IF Day = 24 AND Month = 6 AND Year = 2016 THEN
+   TriggerL = 0
+ENDIF
+
+// niente long se l'apertura di Londra (09:00-09:30) è stata più calma della mezz'ora
+// prima e la mezz'ora dopo non si è allargata
+uptn133 = (High[1] - Low[1] < (High[2] - Low[2]) * 1.1) AND ((High[2] - Low[2]) < (High[3] - Low[3]) * 0.75)
+
+// --- Ingresso
+IF EntraLong AND TriggerL AND GiorniL AND NOT uptn133 AND FattoreM1 > 0 THEN
+   IF IngressoEsplicito = 1 AND close >= LivelloHigh - DistanzaMinima THEN
+      BUY PsL LOTS AT MARKET
+   ELSE
+      BUY PsL LOTS AT LivelloHigh STOP
+   ENDIF
+   SET STOP %LOSS MySLL
+   SET TARGET %PROFIT MyTPL
+ENDIF
+
+// --- Uscita
+IF LongOnMarket AND (Time = OraUscitaL OR BarIndex - TradeIndex > BarreMaxL) THEN
+   SELL AT MARKET
+ENDIF
+
+// --- Solo backtest (togli prima del reale)
+GRAPH RegimeVol AS "volatilità 2 settimane / 5 mesi"
+GRAPH SogliaM1 AS "soglia"

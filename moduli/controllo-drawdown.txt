@@ -1,0 +1,45 @@
+// MODULO: controllo del drawdown con il reinvestimento (solo backtest)
+// Usato su: 185 oro 1H (versioni/DEFINITIVO-controllo-drawdown.txt), per scegliere la
+//           manopola dell'aggressività. È uno strumento di lettura, non cambia i trade.
+// Richiede: CapitaleAttuale (capitale + profitto precedente + StrategyProfit), ValorePerPunto.
+// Produce:  righe GRAPH del drawdown attuale e massimo, in percentuale o in euro.
+// Da incollare in fondo al codice. Non si può usare in ProOrder: in reale va il file
+// senza GRAPH.
+//
+// Il drawdown conta anche le perdite delle posizioni aperte, quindi può superare quello
+// del report di ProRealTime. Il drawdown in percentuale cresce circa in proporzione al
+// rischio per trade: rischio da usare = rischio attuale x drawdown accettato / letto,
+// poi rilanciare e ricontrollare (con il reinvestimento cresce un po' più che in
+// proporzione).
+
+ProfittoAperto = 0
+IF LongOnMarket THEN
+   ProfittoAperto = (close - PositionPrice) * CountOfLongShares * ValorePerPunto
+ELSIF ShortOnMarket THEN
+   ProfittoAperto = (PositionPrice - close) * CountOfShortShares * ValorePerPunto
+ENDIF
+CapitaleConAperte = CapitaleAttuale + ProfittoAperto
+
+ONCE PiccoGrafico = 0
+ONCE MaxDDPerc = 0
+ONCE MaxDDEuro = 0
+PiccoGrafico = max(PiccoGrafico, CapitaleConAperte)
+DDEuro = PiccoGrafico - CapitaleConAperte
+DDPerc = 0
+IF PiccoGrafico > 0 THEN
+   DDPerc = 100 * DDEuro / PiccoGrafico
+ENDIF
+MaxDDPerc = max(MaxDDPerc, DDPerc)
+MaxDDEuro = max(MaxDDEuro, DDEuro)
+
+// Percentuali ed euro hanno scale troppo diverse per lo stesso riquadro
+MostraEuro = 0
+IF MostraEuro = 1 THEN
+   Riga1 = DDEuro
+   Riga2 = MaxDDEuro
+ELSE
+   Riga1 = DDPerc
+   Riga2 = MaxDDPerc
+ENDIF
+GRAPH Riga1 AS "drawdown attuale"
+GRAPH Riga2 AS "drawdown massimo"

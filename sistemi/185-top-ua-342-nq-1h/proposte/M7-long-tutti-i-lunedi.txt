@@ -1,0 +1,200 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 NQ 1H  |  MODULO M7  (seconda tornata, sopra C0)
+// Long tutti i lunedì, non solo quelli con un incrocio delle medie
+//
+// Da dove viene. Il lunedì è il giorno che si stacca: i long aperti negli altri giorni
+// rendono la metà o meno (report di Andrea), e aggiungere i giorni del cambio di mese ha
+// aggiunto trade in perdita (M5). Il long però entra solo nei lunedì in cui la media
+// oraria a 5 supera quella a 10 tra le 08:00 e le 20:00: 333 lunedì su circa 520, quindi
+// un lunedì su tre resta senza trade. Andrea trova pochi 127 trade in dieci anni; qui si
+// cerca di averne di più senza uscire dal giorno buono.
+// Ipotesi. Il vantaggio è il lunedì e il rialzo della settimana che segue (calendario,
+// principio 1 di idee/idee-di-trading.md), non l'incrocio, che decide solo l'ora
+// d'ingresso. I lunedì senza incrocio sono quelli che salgono o scendono senza pause per
+// tutta la giornata.
+// Direzione attesa: long aggiunti con guadagno medio positivo; se è vicino ai 165 € dei
+// long con l'incrocio, l'incrocio non serve; se è molto più basso o negativo, l'incrocio
+// contiene un'informazione (per esempio evita di comprare i lunedì di crollo).
+//
+// Varianti (IngressoFissoM7):
+//   0   incrocio come l'originale; se alle 20:00 il lunedì non ha aperto un long e non c'è
+//       una posizione, compra alle 20:00 (proposta). I long con l'incrocio restano
+//       identici, quindi i trade in più sono solo i lunedì senza incrocio.
+//   1   ogni lunedì alle 09:00, senza incrocio: misura se l'incrocio serve anche nei
+//       lunedì in cui scatta.
+// Come provarlo: UsaM7 = 1; il riferimento è già noto dalla prima tornata (long: 333
+// trade, 165,16 € a trade, 54.997 €, drawdown −3.335 €). Report long e short (gli short
+// che scattano con un long aperto lo invertono, quindi possono cambiare un po').
+// Come giudicarlo: guadagno medio dei long aggiunti =
+//   (profitto M7 - 54.997) / (trade M7 - 333)
+// e profitto / drawdown del long, contro 16,5.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (US Tech 100 Cash da 1 €, valuta di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // 1 = posizione proporzionale al capitale attuale; 0 = non cresce con i profitti
+Leva                = 6        // PER IL TEST: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 0        // con Reinvesti = 0: contratti a peso 1; 0 = valore fisso Leva × Capitale
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // PER IL TEST (originale: 2, cioè rischio dell'8% invece del 4%)
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // valore di 1 punto per 1 contratto (US Tech 100 Cash 1 € -> 1)
+//
+// PER IL TEST: 6 × 5.000 = posizione da 30.000 in ogni trade, circa 1 contratto ai
+// prezzi di oggi e 7 nel 2016, così ogni anno pesa allo stesso modo e il minimo di 0,5
+// contratti non scatta mai; un trade che arriva allo stop del 4% perde 1.200. Con
+// Reinvesti = 0 il capitale del backtest non entra nei calcoli: se ProRealTime ferma il
+// backtest per capitale insufficiente, alzalo.
+//=========================================================================
+
+// --- Parametri M7
+UsaM7           = 1            // 0 = come C0, 1 = modulo attivo
+IngressoFissoM7 = 0            // 0 = incrocio, e alle 20:00 se il lunedì è rimasto senza long; 1 = sempre alle 09:00
+OraRiservaM7    = 200000
+OraFissaM7      = 090000
+
+// --- Parametri della strategia (come l'originale)
+EntraLong     = 1
+EntraShort    = 1
+
+MySLL         = 4          // stop long, % del prezzo
+MySLS         = 4          // stop short
+MyTPL         = 2.5        // target long
+MyTPS         = 1.6        // target short
+
+MyStartTradeL = 080000
+MyEndTradeL   = 200000
+MyStartTradeS = 160000
+MyEndTradeS   = 200000
+PortATRMeno   = 4          // calo minimo dall'apertura della giornata, in escursioni medie orarie
+BarreUscitaL  = 90
+BarreUscitaS  = 100
+MaxDayInTradeL = 8          // giorni in posizione (contati come nell'originale)
+MaxDayInTradeS = 4
+ONCE DayInTrade = 0
+
+// --- Capitale attuale, freno e posizioni
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   IF ContrattiFissi > 0 THEN
+      ContrattiBase = ContrattiFissi
+   ELSE
+      ContrattiBase = Leva * Capitale / (close * ValorePerPunto)
+   ENDIF
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Segnali
+GiornoLong = dayofweek = 1
+
+shortAvg  = Average[5](close)
+shortAvg2 = Average[10](close)
+iptn18    = shortAvg crosses over shortAvg2 and close > (shortAvg * 0.99)
+
+uptn116    = (dhigh(1) - dclose(1)) < 0.20 * (dhigh(1) - dlow(1))
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[20](close)
+
+// --- M7: il lunedì ha già aperto un long?
+ONCE LongOggi = 0
+IF Date <> Date[1] THEN
+   LongOggi = 0
+ENDIF
+IF LongOnMarket AND NOT LongOnMarket[1] THEN
+   LongOggi = 1
+ENDIF
+
+SegnaleL = iptn18
+IF UsaM7 = 1 THEN
+   IF IngressoFissoM7 = 1 THEN
+      SegnaleL = time = OraFissaM7
+   ELSE
+      IF time = OraRiservaM7 AND LongOggi = 0 AND NOT OnMarket THEN
+         SegnaleL = 1
+      ENDIF
+   ENDIF
+ENDIF
+
+// --- Ingressi
+IF time >= MyStartTradeL AND time <= MyEndTradeL THEN
+   IF EntraLong AND SegnaleL AND GiornoLong THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+ENDIF
+
+IF time >= MyStartTradeS AND time <= MyEndTradeS THEN
+   IF EntraShort AND MyTriggerS AND uptn116 THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Uscite
+// giorni in posizione, come l'originale: il contatore riparte solo quando si passa da
+// fuori a dentro il mercato, quindi uno short che inverte un long eredita i giorni del long
+IF OnMarket <> OnMarket[1] THEN
+   DayInTrade = 0
+ENDIF
+IF OnMarket AND (Day > Day[1] OR (DayInTrade > 3 AND DayOfWeek < 1)) THEN
+   DayInTrade = DayInTrade + 1
+ENDIF
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL AND MaxDayInTradeL > 0 THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS AND MaxDayInTradeS > 0 THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+FineSettimana = dayofweek = 5 AND time = 210000
+
+IF LongOnMarket AND (barindex - tradeindex > BarreUscitaL OR FineSettimana) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (barindex - tradeindex > BarreUscitaS OR FineSettimana) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH LongOggi AS "long aperto oggi"

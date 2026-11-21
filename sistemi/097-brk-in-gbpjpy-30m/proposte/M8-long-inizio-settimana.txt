@@ -1,0 +1,167 @@
+//-------------------------------------------------------------------------
+// GBPJPY  |  M8, nuovo tentativo 2 di 3: IL LATO LONG, DA LUNEDÌ A MERCOLEDÌ
+// Grafico: GBP/JPY mini (10.000 GBP, 100 yen per pip), 30 minuti, orari italiani.
+//
+// Da dove parte. Due long funzionano nella stessa metà della settimana:
+// - il long settimanale di M6 (lunedì 03:00 -> mercoledì 22:00): 529 trade, 2.335 yen
+//   a trade, ma 145.000 di drawdown;
+// - il long di rottura di 097 BRK (lunedì e mercoledì, 10:30 -> 22:00): 457 trade,
+//   1.572 yen a trade a 1 contratto, 84.000 di drawdown, senza mai tenere la notte.
+// M6 conferma che lunedì-mercoledì è la metà rialzista della settimana anche per
+// GBP/JPY (V1); il giro dell'orologio dice che dentro ogni giorno la parte rialzista
+// sono le ore americane e la parte ribassista la notte e la mattina europea
+// (fonti/prodotti/gbpjpy.md, A1 e A6). Due modi di metterli insieme:
+//
+// ModoLong = 1, SETTIMANALE A OROLOGIO (proposta). Come M6, ma entra il lunedì alle
+//   13:00 invece che alle 03:00: salta la notte asiatica e la mattina europea del
+//   lunedì, che per un cross di carry sono in media in calo (circa 3 punti base) e in
+//   cui lo stop stretto di M6 scatta per rumore prima che la settimana parta.
+//   Direzione attesa: meno perdenti allo stop, guadagno medio più alto, drawdown più
+//   basso. Le notti di lunedì e martedì restano: sono il prezzo per tenere i
+//   movimenti di più giorni, che fanno il vincente medio di 17.000 yen.
+// ModoLong = 2, ROTTURA OGNI GIORNO DA LUNEDÌ A MERCOLEDÌ. Il long di 097 BRK
+//   (rottura del massimo della notte alle 10:30, uscita alle 22:00, stessi stop e
+//   pattern) con il martedì aggiunto, che è dentro la metà rialzista della settimana.
+//   Niente notti, quindi drawdown per trade più piccolo. Con GiorniLong = 0 è il long
+//   di 097 BRK alla posizione del test: è anche il riferimento mai lanciato di M1-M5.
+//
+// UsaM8 = 0 riproduce il long di M6 (lunedì 03:00, stop 0,4%).
+//
+// COME PROVARLO (report long)
+// a) ModoLong = 1, valori del file.
+// b) ModoLong = 2, GiorniLong = 1 (lunedì, martedì, mercoledì).
+// c) ModoLong = 2, GiorniLong = 0: long di 097 BRK alla posizione del test (riferimento
+//    di b; serve anche a misurare il martedì: guadagno medio dei trade aggiunti =
+//    differenza di profitto / differenza di trade).
+// d) Facoltativo, ottimizzazione del modo 1: OraIngressoL da 3 a 15 passo 2 (7 valori),
+//    MySLL1 da 0.4 a 1 passo 0.2 (4): 28 combinazioni. Se l'ora migliore resta 3, il
+//    guadagno del lunedì mattina smentisce la ragione del cambiamento.
+// COME GIUDICARLO
+// - a) contro M6 long (529 trade, 2.335,49 yen, DD -144.623,95, profitto / DD 8,5):
+//   guadagno medio / drawdown più alto.
+// - b) contro c): il martedì deve rendere come lunedì e mercoledì; poi b) contro a):
+//   quale dei due long dà più guadagno per unità di drawdown.
+// Lo short va scelto a parte (M5 short, M7): il sistema finale li mette insieme.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+UsaM8    = 1                   // 0 = long di M6
+ModoLong = 1                   // 1 = settimanale a orologio; 2 = rottura ogni giorno lun-mer
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in yen, la valuta di StrategyProfit su GBP/JPY
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA (in yen)
+//    Primo avvio: CapitaleVersato = soldi messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 1000000  // PER IL TEST
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop
+RischioSettimanale  = 0.8      // modo 1, PER IL TEST: 8.000 yen con stop 0,4% = 2.000.000 di posizione
+RischioGiornaliero  = 1.5      // modo 2, PER IL TEST: 15.000 yen con stop 0,75% = 2.000.000 di posizione
+
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5      // verificare il minimo di IG sul mini
+MaxContratti        = 80
+ValorePerPunto      = 10000    // yen per 1,00 di prezzo, 1 contratto mini (10.000 GBP)
+//=========================================================================
+
+// --- Modo 1: settimanale (variabili da ottimizzare, ore decimali)
+OraIngressoL = 13              // lunedì; da 3 a 15, passo 2
+MySLL1       = 0.4             // stop, % del prezzo; da 0.4 a 1, passo 0.2
+MyTPL1       = 2               // target, %
+OraUscitaL1  = 22              // mercoledì
+
+// --- Modo 2: rottura ogni giorno (come 097 BRK)
+GiorniLong        = 1          // 0 = lunedì e mercoledì (originale); 1 = lunedì, martedì, mercoledì
+IngressoEsplicito = 1          // 1 = al mercato se alle 10:30 il livello è già superato
+MySLL2            = 0.75
+MyTPL2            = 2
+OraLivello        = 3.5
+OraIngressoL2     = 10.5
+OraUscitaL2       = 22
+
+IF UsaM8 = 0 THEN
+   ModoLong     = 1
+   OraIngressoL = 3
+   MySLL1       = 0.4
+ENDIF
+
+// --- Posizione (dalla console)
+IF ModoLong = 1 THEN
+   StopL   = MySLL1 / 100
+   Rischio = RischioSettimanale
+ELSE
+   StopL   = MySLL2 / 100
+   Rischio = RischioGiornaliero
+ENDIF
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioYenL = max(0, CapitaleBase) * Rischio / 100
+PsL = max(MinContratti, min(MaxContratti, RischioYenL / (close * StopL * ValorePerPunto)))
+
+// --- Ora della barra in decimali (ora di chiusura, come Time)
+OraBarra = Hour + Minute / 60
+
+// ============ MODO 1: lunedì -> mercoledì ============
+IF ModoLong = 1 THEN
+   IF DayOfWeek = 1 AND ABS(OraBarra - OraIngressoL) < 0.01 AND NOT OnMarket THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL1
+      SET TARGET %PROFIT MyTPL1
+   ENDIF
+   // uscita il mercoledì all'ora scelta (se manca la barra, alla prima successiva)
+   IF LongOnMarket AND ((DayOfWeek = 3 AND OraBarra >= OraUscitaL1 - 0.01) OR DayOfWeek >= 4) THEN
+      SELL AT MARKET
+   ENDIF
+ENDIF
+
+// ============ MODO 2: rottura del massimo della notte, ogni giorno lun-mer ============
+IF ABS(OraBarra - OraLivello) < 0.01 THEN
+   LivelloHigh = DHigh(0)
+ENDIF
+
+IF GiorniLong = 1 THEN
+   GiorniL = DayOfWeek >= 1 AND DayOfWeek <= 3
+ELSE
+   GiorniL = DayOfWeek = 1 OR DayOfWeek = 3
+ENDIF
+
+// pattern dell'originale: niente long se l'apertura di Londra (09:00-09:30) è stata più
+// calma della mezz'ora prima e la mezz'ora dopo non si è allargata
+uptn133 = (High[1] - Low[1] < (High[2] - Low[2]) * 1.1) AND ((High[2] - Low[2]) < (High[3] - Low[3]) * 0.75)
+
+IF ModoLong = 2 THEN
+   TriggerL = ABS(OraBarra - OraIngressoL2) < 0.01
+   IF TriggerL AND GiorniL AND NOT uptn133 AND LivelloHigh > 0 THEN
+      IF IngressoEsplicito = 1 AND close >= LivelloHigh THEN
+         BUY PsL LOTS AT MARKET
+      ELSE
+         BUY PsL LOTS AT LivelloHigh STOP
+      ENDIF
+      SET STOP %LOSS MySLL2
+      SET TARGET %PROFIT MyTPL2
+   ENDIF
+   IF LongOnMarket AND (ABS(OraBarra - OraUscitaL2) < 0.01 OR BarIndex - TradeIndex > 24) THEN
+      SELL AT MARKET
+   ENDIF
+ENDIF
+
+// --- Solo backtest (togli prima del reale)
+GRAPH PsL AS "contratti long"

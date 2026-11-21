@@ -1,0 +1,144 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M9 (sopra C1 = originale + M5 sugli short)
+// Più short nei periodi agitati: anche il lunedì, e anche senza la settimana debole
+//
+// Ipotesi. M5 ha mostrato che lo short guadagna quasi solo nei periodi agitati (31,38 €
+// a trade contro 7,12 € in quelli calmi), come prevede il meccanismo delle coperture di
+// chi ha esposizione gamma negativa (Baltussen et al. 2021). Ma ha anche dimezzato il
+// numero di short. Le due esclusioni dell'originale, niente short il lunedì e short
+// solo se il minimo di ieri non supera quello di cinque giorni prima, sono state scelte
+// quando gli short calmi erano la maggioranza e non hanno un meccanismo documentato:
+// sul DAX non c'è un effetto lunedì dal 2000 (replica del 2024). Nei periodi agitati il
+// momento intraday non dipende dal giorno della settimana né da come è andata la
+// settimana, quindi gli short in più dovrebbero guadagnare quasi quanto gli altri.
+// Gli short in più sono comunque solo quelli dei periodi agitati (filtro M5 di C1).
+// Direzione attesa: guadagno medio degli short aggiunti chiaramente sopra quello degli
+// short calmi scartati da M5 (7,12 €), almeno 15 € a trade; profitto totale dello short
+// più alto con un drawdown simile.
+// UsaM9 = 0 riproduce C1 con Reinvest = 0.
+//
+// Varianti, da lanciare separatamente:
+//   ShortLunedi = 1, SenzaSettimanaDebole = 0   (proposta)
+//   ShortLunedi = 0, SenzaSettimanaDebole = 1
+// Come provarlo: Reinvest = 0 (già impostato), report delle sole posizioni short;
+// riferimento C1 con Reinvest = 0.
+// Come giudicarlo: guadagno medio degli short aggiunti =
+//   (profitto short M9 - profitto short C1) / (trade short M9 - trade short C1)
+// Va confrontato con il guadagno medio degli short di C1 (circa 31 €).
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+UsaM9 = 1                     // 0 = C1, 1 = modulo attivo
+ShortLunedi = 1               // 1 = short anche il lunedì
+SenzaSettimanaDebole = 0      // 1 = short anche se la settimana non è debole
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+
+// --- M5: regime di volatilità per lo short (barre giornaliere chiuse)
+SogliaVolS = 1.0
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 0    // PER IL TEST (originale: 1)
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+// --- M9: giorni e condizione della settimana per lo short
+GiornoShortOk = dayofweek <> 1
+IF UsaM9 = 1 AND ShortLunedi = 1 THEN
+   GiornoShortOk = dayofweek >= 1 AND dayofweek <= 5
+ENDIF
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and GiornoShortOk
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+IF UsaM9 = 1 AND SenzaSettimanaDebole = 1 THEN
+   PatternS = 1
+ENDIF
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif

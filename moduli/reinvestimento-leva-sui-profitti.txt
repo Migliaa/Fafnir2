@@ -1,0 +1,41 @@
+// MODULO: reinvestimento con leva più alta sui profitti che sul capitale versato
+// Validato su: 185 NQ 1H (M9), 2016-2026: drawdown massimo 18% del capitale, accettato
+//              da Andrea (obiettivo 20-25%); con leva costante 1,5 (M8) da 5.000 a
+//              213.000 € ma contratti cresciuti solo del 22% l'anno.
+// Sostituisce, nell'intestazione standard, il calcolo di ContrattiBase.
+// Richiede: Capitale, ProfittoPrecedente, StrategyProfit, Leva, Reinvesti, ContrattiFissi,
+//           close, ValorePerPunto, e i parametri sotto nell'intestazione.
+// Produce:  ValoreBase, LevaEffettiva, ContrattiBase.
+// Leva effettiva con Leva 1,5 e LevaProfitti 4: 1,5 al versato, 2,3 a 1,5 volte, 2,75 al
+// doppio, 3 (tetto) al triplo; il tetto scende da 3 a 2 tra 4 e 10 volte il versato.
+// Il drawdown in percentuale va letto con GRAPH 100 * (1 - CapitaleAttuale / PiccoCapitale).
+
+LevaProfitti   = 4
+LevaMaxInizio  = 3
+LevaMaxFine    = 2
+MultiploInizio = 4
+MultiploFine   = 10
+
+IF Reinvesti = 1 THEN
+   Profitti = ProfittoPrecedente + StrategyProfit
+   IF Profitti > 0 THEN
+      ValoreBase = Leva * Capitale + LevaProfitti * Profitti
+   ELSE
+      ValoreBase = Leva * (Capitale + Profitti)
+   ENDIF
+   Multiplo = CapitaleAttuale / Capitale
+   LevaMax = LevaMaxInizio
+   IF Multiplo > MultiploInizio THEN
+      LevaMax = LevaMaxInizio - (LevaMaxInizio - LevaMaxFine) * min(1, (Multiplo - MultiploInizio) / (MultiploFine - MultiploInizio))
+   ENDIF
+   ValoreBase = max(0, min(ValoreBase, LevaMax * CapitaleAttuale))
+ELSE
+   ValoreBase = Leva * Capitale
+ENDIF
+LevaEffettiva = ValoreBase / CapitaleAttuale
+
+IF ContrattiFissi > 0 THEN
+   ContrattiBase = ContrattiFissi
+ELSE
+   ContrattiBase = ValoreBase / (close * ValorePerPunto)
+ENDIF

@@ -1,0 +1,98 @@
+//-------------------------------------------------------------------------
+// Codice fornito da Andrea il 2026-11-20 (DAX, timeframe 30 minuti).
+// NON MODIFICARE: è il riferimento per tutti i confronti.
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 165 DAX  30m def
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 165 DAX ExpAVG 30 min LOT - ANDY
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 1    //Reinvest = 1 ; No Reinvest = 0
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS then
+sellshort PsS Lots at market
+endif
+
+ES1=0//(Barindex-tradeindex>9) and(Barindex-tradeindex<12) and positionperf(0)<0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)//OR Barindex-tradeindex>37)
+ExitS=ES1 OR Barindex-tradeindex>12//(time=213000 OR
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif

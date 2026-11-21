@@ -1,0 +1,133 @@
+//-------------------------------------------------------------------------
+// GBPJPY  |  M7, nuovo tentativo 1 di 3: SHORT DEL FINE SETTIMANA, A OROLOGIO
+// Grafico: GBP/JPY mini (10.000 GBP, 100 yen per pip), 30 minuti, orari italiani.
+//
+// Da dove parte. Lo short di M6 (giovedì 12:00 -> venerdì 17:00) ha confermato il
+// ciclo settimanale dello yen su GBP/JPY: 536 trade dal 2016, profit factor 1,32,
+// curva diritta, ma 1.546 yen a trade con 179.000 di drawdown.
+// Cosa cambia, e perché.
+// 1. Ingresso alle 22:00 del giovedì invece che alle 12:00. Il trade di M6 tiene il
+//    pomeriggio e la sera americana del giovedì, cioè le ore in cui i cross di carry
+//    salgono: dal 1999 al 2019 GBP/JPY è salito in media di 3,8 punti base al giorno
+//    tra le 17:00 e le 23:00, mentre è sceso dalla chiusura di New York al primo
+//    pomeriggio europeo (fonti/prodotti/gbpjpy.md, A1 e A6; confermato sul long di
+//    097 BRK da M3). Entrando alle 22:00 lo short tiene solo la metà della giornata
+//    che gli è favorevole: la notte asiatica e la mattina europea del venerdì, fino al
+//    fixing di Londra delle 17:00. Guadagno atteso in più: circa 2,5 punti base a
+//    trade (500 yen sulla posizione del test), con un terzo di ore in meno di
+//    esposizione, quindi drawdown più basso.
+// 2. Taglia inversa alla volatilità (volatilità di 5 mesi / 2 settimane, tra 0,5 e
+//    1,5): sullo short di 128 BIAS HOUR, stessa finestra di calendario e stessa forma
+//    (uscita a tempo, stop lontano), ha tolto il 25% del drawdown (M8); sullo short di
+//    M5 profitto / drawdown è salito da 10 a 15,5.
+// Lo short sta dalla parte giusta dei crolli improvvisi: gli interventi della BoJ
+// (2022, 2024) e i crolli della notte asiatica (sterlina 2016, yen 2019) fanno
+// scendere GBP/JPY.
+//
+// UsaM7 = 0 riproduce lo short di M6 (giovedì 12:00, senza taglia a volatilità).
+//
+// COME PROVARLO (report short)
+// a) Valori del file.
+// b) Facoltativo, ottimizzazione: OraIngressoS da 12 a 22 passo 2 (6 valori),
+//    OraUscitaS da 13 a 17 passo 2 (3), MySLS da 1 a 2 passo 0.5 (3): 54 combinazioni.
+//    Meglio fino a fine 2023, guardando 2024-2026 senza toccarli, o walk forward.
+//    Se l'ora migliore resta 12, il guadagno è del giovedì pomeriggio e non
+//    dell'orologio: va detto, perché smentisce la ragione del cambiamento.
+// COME GIUDICARLO
+// - Contro M6 short (536 trade, 1.545,73 yen, DD -179.399,40, profitto / DD 4,6):
+//   guadagno medio e profitto / drawdown più alti, anche con meno profitto totale.
+// - Anni in perdita e peso del migliore trade sul totale.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 6000
+
+UsaM7 = 1                      // 0 = short di M6
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in yen, la valuta di StrategyProfit su GBP/JPY
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA (in yen)
+//    Primo avvio: CapitaleVersato = soldi messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 1000000  // PER IL TEST
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop
+RischioShort        = 4        // PER IL TEST: 40.000 yen con stop 2% = 2.000.000 di posizione
+
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5      // verificare il minimo di IG sul mini
+MaxContratti        = 80
+ValorePerPunto      = 10000    // yen per 1,00 di prezzo, 1 contratto mini (10.000 GBP)
+//
+// Con la taglia a volatilità il rischio vero va dalla metà a una volta e mezza di
+// quello scritto: meno nei periodi agitati, di più in quelli calmi.
+//=========================================================================
+
+// --- Interruttori e variabili da ottimizzare (ore decimali)
+TagliaVolS   = 1               // 1 = posizione x volatilità 5 mesi / 2 settimane, tra 0,5 e 1,5
+OraIngressoS = 22              // giovedì; da 12 a 22, passo 2
+OraUscitaS   = 17              // venerdì; da 13 a 17, passo 2
+MySLS        = 2               // stop, % del prezzo; da 1 a 2, passo 0.5
+MyTPS        = 3.4             // target, % (come 128 BIAS HOUR)
+
+IF UsaM7 = 0 THEN
+   TagliaVolS   = 0
+   OraIngressoS = 12
+   OraUscitaS   = 17
+   MySLS        = 2
+ENDIF
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+FattoreVolS = 1
+IF TagliaVolS = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreVolS = max(0.5, min(1.5, VolLunga / VolBreve))
+ENDIF
+
+// --- Posizione (dalla console)
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioYenS = max(0, CapitaleBase) * RischioShort / 100
+PsS = max(MinContratti, min(MaxContratti, RischioYenS / (close * StopS * ValorePerPunto) * FattoreVolS))
+
+// --- Ora della barra in decimali (ora di chiusura, come Time)
+OraBarra = Hour + Minute / 60
+
+// --- Ingresso: giovedì all'ora scelta
+TriggerS = DayOfWeek = 4 AND ABS(OraBarra - OraIngressoS) < 0.01
+
+IF TriggerS AND NOT OnMarket THEN
+   SELLSHORT PsS LOTS AT MARKET
+   SET STOP %LOSS MySLS
+   SET TARGET %PROFIT MyTPS
+ENDIF
+
+// --- Uscita: venerdì all'ora scelta (se manca la barra, alla prima successiva)
+IF ShortOnMarket AND ((DayOfWeek = 5 AND OraBarra >= OraUscitaS - 0.01) OR DayOfWeek = 1) THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+// --- Solo backtest (togli prima del reale)
+GRAPH FattoreVolS AS "fattore di volatilità"
+GRAPH PsS AS "contratti short"

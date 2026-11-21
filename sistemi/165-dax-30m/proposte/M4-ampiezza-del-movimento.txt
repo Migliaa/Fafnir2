@@ -1,0 +1,154 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M4
+// Entrare solo se la giornata si è già mossa abbastanza nella direzione del trade
+//
+// Ipotesi. Il sistema compra alle 13:30 dopo una salita e vende alle 12:30 dopo una
+// discesa: è la forma del momento intraday, per cui il rendimento dalla chiusura del
+// giorno prima alla mattina prevede quello del pomeriggio (Gao et al. 2018 sullo
+// S&P 500; Li-Sakkas-Urquhart 2022 in 12 borse sviluppate su 16). Il meccanismo più
+// studiato sono le coperture di chi ha esposizione gamma negativa, soprattutto i market
+// maker di opzioni: per restare coperti devono comprare quando l'indice sale e vendere
+// quando scende, e la quantità da comprare o vendere cresce con l'ampiezza del
+// movimento (Baltussen et al. 2021, oltre 60 futures). Le condizioni dell'originale
+// guardano la direzione (media a 25 barre, RSI a 2 periodi) ma non l'ampiezza: un long
+// può partire anche in una giornata che è ancora sotto la chiusura di ieri.
+// Qui il trade parte solo se il movimento dalla chiusura del giorno prima, misurato in
+// escursioni medie giornaliere (ultimi 20 giorni), è almeno SogliaM4 nella direzione
+// del trade.
+// Con il DAX a 26.700 e un'escursione media dell'1,2% circa, SogliaM4 = 0.25 vuol dire
+// circa 80 punti sopra la chiusura di ieri per il long, 80 sotto per lo short.
+// UsaM4 = 0 riproduce l'originale con Reinvest = 0 (salvo i primi giorni del backtest,
+// per le barre precaricate).
+//
+// Varianti: SogliaM4 0 (solo il segno del movimento), 0.25 (proposta), 0.5.
+// Come provarlo: Reinvest = 0 (già impostato), così la taglia dipende solo dal prezzo
+// d'ingresso e i trade scartati sono la differenza esatta tra originale e modulo.
+// Lanciare UsaM4 = 0 e UsaM4 = 1, report long e short separati.
+// Come giudicarlo, per ciascun lato: guadagno medio dei trade scartati =
+//   (profitto originale - profitto M4) / (trade originale - trade M4)
+// M4 funziona se questo valore è chiaramente più basso del guadagno medio dei trade
+// tenuti, che dovrebbe salire rispetto all'originale. Se i due valori sono simili,
+// l'ampiezza non aggiunge informazione alle condizioni dell'originale.
+// Lo stesso studio di Baltussen trova che nei giorni seguenti il movimento si inverte in
+// parte: il long, che tiene la notte, potrebbe beneficiarne meno dello short.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+UsaM4 = 1                 // 0 = originale, 1 = modulo attivo
+SogliaM4 = 0.25           // movimento minimo, in escursioni medie giornaliere
+ApplicaLong  = 1
+ApplicaShort = 1
+
+// --- Escursione media giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+ATRGiorno = AverageTrueRange[20](close)
+TIMEFRAME(default)
+
+MossaGiorno = 0
+IF ATRGiorno > 0 THEN
+   MossaGiorno = (close - DClose(1)) / ATRGiorno
+ENDIF
+
+FiltroL = 1
+FiltroS = 1
+IF UsaM4 = 1 THEN
+   IF ApplicaLong = 1 AND MossaGiorno < SogliaM4 THEN
+      FiltroL = 0
+   ENDIF
+   IF ApplicaShort = 1 AND MossaGiorno > -SogliaM4 THEN
+      FiltroS = 0
+   ENDIF
+ENDIF
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 0    // PER IL TEST (originale: 1)
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL AND FiltroL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND FiltroS then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH MossaGiorno AS "movimento della giornata (escursioni medie)"

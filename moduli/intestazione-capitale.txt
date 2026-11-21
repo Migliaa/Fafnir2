@@ -1,0 +1,74 @@
+// MODULO: intestazione standard di gestione del capitale
+// Va in cima a ogni codice, proposte e versioni, subito dopo i DEFPARAM: è il layout
+// chiesto da Andrea il 2026-11-20 per tutti i sistemi.
+// Validato su: 165 DAX 30m (M8: posizione a leva costante, leva 3 sul long e 4 sullo
+//              short, approvato da Andrea).
+// Richiede: StrategyProfit; gli ordini usano PsL e PsS (BUY PsL LOTS AT MARKET ...).
+// Produce:  CapitaleAttuale, PiccoCapitale, Freno, PsL, PsS.
+//
+// Valuta: tutto nella valuta di StrategyProfit, cioè dello strumento: euro sul DAX, yen
+// sui cross in yen, dollari su EURUSD.
+// ValorePerPunto = valore di un movimento di 1,00 del prezzo per 1 contratto:
+//   DAX Cash 1 € -> 1;  AUD/JPY mini (10.000 AUD) -> 10000 (yen);  EUR/USD mini -> 10000.
+// Leva = valore della posizione / capitale attuale, a peso 1. Su un sistema con stop
+// stretto in percentuale, dove conta il rischio allo stop: Leva = rischio % / stop %
+// (per esempio 1% di rischio con stop allo 0,4% -> Leva 2,5).
+// Pesi: con Reinvesti = 0 e pesi a 1 si legge nel backtest il drawdown massimo di
+// ciascun lato; PesoShort = DD long / DD short rende uguali i due drawdown.
+// Nelle proposte i valori sono quelli del test (contratti fissi, pesi 1, capitale del
+// backtest) e va detto quale riferimento lanciare.
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto nella valuta dello strumento
+//
+// Primo avvio:  Capitale = soldi del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000
+ProfittoPrecedente  = 0
+PiccoPrecedente     = 0
+
+Reinvesti           = 1        // 1 = posizione proporzionale al capitale attuale; 0 = contratti fissi
+Leva                = 3        // con Reinvesti = 1: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 1        // con Reinvesti = 0: contratti a peso 1
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown (Grossman-Zhou)
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 1
+MaxContratti        = 80
+ValorePerPunto      = 1
+//=========================================================================
+
+// ... parametri e indicatori della strategia (anche eventuali blocchi TIMEFRAME) ...
+
+// --- Capitale attuale, freno e posizioni (prima degli ordini)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   ContrattiBase = ContrattiFissi
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))

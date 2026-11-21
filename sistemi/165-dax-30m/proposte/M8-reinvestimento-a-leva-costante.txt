@@ -1,0 +1,171 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M8 (sopra C1 = originale + M5 sugli short)
+// Reinvestimento a leva costante, diversa per long e short (M1 ricalibrato)
+//
+// Cosa ha insegnato M1. Rischiare il 5% del capitale con uno stop al 3% vuol dire una
+// posizione che vale 1,7 volte il capitale: meno di quella che il contratto minimo
+// impone all'inizio del backtest (2,3 volte con 5.000 € e il DAX a 11.500). Gli stop
+// scattano di rado, quindi la grandezza che conta è la leva, cioè valore della posizione
+// / capitale, non il rischio allo stop.
+// La tua formula (5% del capitale + 12% dei profitti) parte da leva 2,3 per il minimo di
+// 1 contratto e sale verso 4 sul long e 4,8 sullo short man mano che i profitti
+// crescono: rischia poco all'inizio e sempre di più dopo. Con un vantaggio stabile la
+// crescita migliore si ottiene con una leva costante (criterio di Kelly e sue frazioni,
+// MacLean-Thorp-Ziemba 2010); qui contratti = Leva x capitale attuale / prezzo.
+// Lo short con M5 rende di più per unità di rischio del long (profit factor 2,07
+// contro 1,50) e non resta aperto di notte, quindi regge una leva più alta.
+// Il freno sul drawdown (modulo freno-drawdown, validato su 128 BIAS HOUR) è un
+// interruttore separato: UsaFreno = 1.
+// Direzione attesa: con LevaL 4 / LevaS 5, cioè il punto a cui tende la tua formula,
+// più capitale finale a parità di drawdown percentuale massimo, perché la leva piena
+// lavora fin dall'inizio.
+// Rischio da conoscere: con leva 4 uno stop pieno del long (3%) costa il 12% del
+// capitale, e un salto notturno oltre lo stop di più. La tua formula arriva allo stesso
+// livello quando i profitti sono molto più grandi del capitale iniziale.
+// UsaM8 = 0 riproduce C1 con la tua formula di reinvestimento (Reinvest = 1).
+//
+// Come provarlo: il blocco PER IL TEST mette InitCapital = 5000 (il capitale del
+// backtest) e ProfittoPrecedente = 0, così tutte le versioni partono uguali. Lanciare
+// UsaM8 = 0 (riferimento), poi UsaM8 = 1 con LevaL / LevaS = 3 / 4 e 4 / 5; sulla
+// migliore, UsaFreno = 1. Varianti prudenti: 2 / 2.5.
+// Come giudicarlo: sistema completo, capitale finale e punto più basso della riga GRAPH
+// "drawdown %" (non il drawdown in euro del report, che con il reinvestimento cresce per
+// forza). M8 è migliore se una variante ha più capitale finale con un drawdown
+// percentuale uguale o più basso del riferimento.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+UsaM8 = 1                 // 0 = C1 con la formula originale, 1 = leva costante
+LevaL = 3                 // valore della posizione long / capitale attuale
+LevaS = 4                 // valore della posizione short / capitale attuale
+UsaFreno = 0              // 1 = freno sul drawdown attivo
+MaxDD = 0.40              // drawdown dal massimo a cui la taglia arriva a FrenoMinimo
+FrenoMinimo = 0.4
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+
+// --- M5: regime di volatilità per lo short (barre giornaliere chiuse)
+SogliaVolS = 1.0
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+ProfittoPrecedente  = 0    // PER IL TEST (nel reale: 1600 = 900+550+150)
+SProfit             = Strategyprofit + ProfittoPrecedente
+Reinvest            = 1    //Reinvest = 1 ; No Reinvest = 0
+InitCapital         = 5000  // PER IL TEST = capitale del backtest (originale: 6000)
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+CapitaleAttuale = InitCapital + Strategyprofit + ProfittoPrecedente
+
+ONCE PiccoCapitale = 0
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaM8 = 1 AND UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF UsaM8 = 1 THEN
+   PsL = LevaL * CapitaleAttuale / close * Freno
+   PsS = LevaS * CapitaleAttuale / close * Freno
+ELSE
+   PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+   PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+ENDIF
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+// Drawdown calcolato sui soli trade chiusi.
+DDPercento = 100 * (CapitaleAttuale / PiccoCapitale - 1)
+GRAPH DDPercento AS "drawdown %"
+GRAPH PsL * close / CapitaleAttuale AS "leva long"
+GRAPH PsS * close / CapitaleAttuale AS "leva short"

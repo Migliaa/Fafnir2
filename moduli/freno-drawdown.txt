@@ -1,0 +1,22 @@
+// MODULO: freno sul drawdown (Grossman-Zhou)
+// Validato su: 128 BIAS HOUR AUDJPY 1H (M10), sopra reinvestimento a frazione fissa;
+//              accettato da Andrea il 2026-11-20 e messo in produzione.
+// Richiede: il modulo reinvestimento-frazione-fissa.txt (CapitaleAttuale, CapitaleValuta),
+//           PsL, PsS prima dei limiti MaxPosition / minimo 1.
+// Produce:  Freno; moltiplica PsL e PsS.
+// Va giudicato contro il sistema con rischio per trade ridotto e stesso drawdown %:
+// il freno abbassa sempre il drawdown, conta se a parità di drawdown cresce di più.
+// Dopo un riavvio, PiccoCapitale riparte: per non perderlo usare PiccoPrecedente
+// come nella versione di produzione di 128 BIAS HOUR.
+
+MaxDD        = 0.40    // drawdown dal massimo a cui la taglia arriva a FrenoMinimo
+FrenoMinimo  = 0.4     // taglia minima durante il drawdown
+
+ONCE PiccoCapitale = CapitaleValuta
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+Freno = max(FrenoMinimo, min(1, Freno))
+
+PsL = PsL * Freno
+PsS = PsS * Freno

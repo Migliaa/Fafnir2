@@ -1,0 +1,150 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M4
+// Niente long quando la volatilità esplode (fase di chiusura dei carry trade)
+//
+// AUDJPY è la coppia di carry per eccellenza: quando la volatilità sale di colpo
+// gli operatori chiudono le posizioni lunghe su AUD finanziate in JPY e la coppia
+// scende in modo brusco e asimmetrico. Il filtro salta i long quando la volatilità
+// dell'ultimo giorno supera di SogliaShockL volte quella degli ultimi mesi.
+// Sugli short il filtro è spento di default (SogliaCalmaS = 0): se lo accendi,
+// salta gli short quando il mercato è molto calmo, cioè quando il carry spinge
+// AUDJPY al rialzo e lo short paga anche il costo di finanziamento overnight.
+// UsaM4 = 0 riproduce esattamente l'originale con Reinvest = 0.
+// Fonti: Brunnermeier-Nagel-Pedersen 2008.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+UsaM4 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+// --- Parametri M4 (prova solo 1.5 / 2 / 2.5 per la soglia long)
+BarreShock     = 24       // circa 1 giorno di barre orarie
+BarreVolLunga  = 2000     // circa 4 mesi di barre orarie
+SogliaShockL   = 2        // niente long se vol ultimo giorno > 2 x vol di lungo periodo
+SogliaCalmaS   = 0        // 0 = spento; es. 0.6 = niente short se vol < 0.6 x lungo periodo
+
+VolShock = AverageTrueRange[BarreShock](close)
+VolLunga = AverageTrueRange[BarreVolLunga](close)
+
+RapportoShock = 1
+IF VolLunga > 0 THEN
+   RapportoShock = VolShock / VolLunga
+ENDIF
+
+FiltroL = 1
+FiltroS = 1
+IF UsaM4 = 1 THEN
+   IF SogliaShockL > 0 AND RapportoShock > SogliaShockL THEN
+      FiltroL = 0
+   ENDIF
+   IF SogliaCalmaS > 0 AND RapportoShock < SogliaCalmaS THEN
+      FiltroS = 0
+   ENDIF
+ENDIF
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000
+RiskOnCapital       = 0.15
+MaxPosition         = 80
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+PsL = RiskCapitalBase / ((close * (MySLL / 100)) * 3)
+PsS = RiskCapitalBase / (close * (MySLS / 100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL AND FiltroL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS AND FiltroS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and barindex-tradeindex>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif

@@ -1,0 +1,224 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 GC 1H  |  MODULO M4
+// Taglia: rischio costante allo stop (l'originale) o leva costante (intestazione standard)
+//
+// Ipotesi. L'originale dimensiona la posizione perché lo stop costi sempre il 4% del
+// capitale; lo stop è di 3 escursioni medie orarie, quindi nei periodi agitati usa meno
+// contratti e in quelli calmi di più. L'intestazione standard, validata sul DAX (M8),
+// usa invece una leva costante: valore della posizione = Leva x capitale, a prescindere
+// dalla volatilità. Ridurre l'esposizione quando la volatilità sale riduce code e
+// drawdown su tutti gli strumenti, mentre sulle materie prime migliora poco il rapporto
+// rendimento/rischio (Harvey et al. 2018). Sul DAX la taglia a volatilità è stata
+// scartata perché gli short guadagnavano molto di più nei periodi agitati: M2 dice se
+// qui succede lo stesso, e i due test vanno letti insieme.
+// Direzione attesa: con lo stop legato alla volatilità, il rischio costante (ModoM4 = 2)
+// dà un rapporto profitto / drawdown più alto della leva costante (ModoM4 = 1), salvo che
+// M2 mostri un guadagno per trade che cresce con la volatilità molto più del rischio.
+// Rischio da conoscere: nei periodi calmi lo stop si stringe e il rischio costante porta
+// la leva molto in alto (riga GRAPH "leva long"); un salto di prezzo alla riapertura
+// oltre lo stop costa allora più del 4%. LevaMaxM4 limita la leva.
+//
+// Senza reinvestimento (Reinvesti = 0) la posizione è calcolata sul capitale fisso:
+// profitto e drawdown crescono nella stessa proporzione con la taglia media, quindi il
+// rapporto profitto / drawdown si può confrontare tra i due modi anche se le taglie
+// medie sono diverse. UsaM4 = 0 riproduce l'originale a 1 contratto (BuyLot = 0).
+// ModoM4 = 2 con Reinvesti = 1, ProfittoPrecedente = 200 e LevaMaxM4 = 0 riproduce
+// l'originale come è oggi (4% di 4.000 + 200 + profitti).
+//
+// Come provarlo: Reinvesti = 0 (già impostato), lanciare ModoM4 = 1 e ModoM4 = 2, sistema
+// completo e, se possibile, report long e short separati. Variante: ModoM4 = 2 con
+// LevaMaxM4 = 6.
+// Come giudicarlo: rapporto profitto / drawdown, perdita peggiore e barre annuali (con la
+// leva costante pesano di più gli anni agitati, con il rischio costante quelli calmi).
+// Il modo con il rapporto più alto diventa la formula dell'intestazione nella versione
+// combinata; la scelta della leva o del rischio si fa dopo, sul drawdown percentuale.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in dollari (valuta dell'oro e di StrategyProfit)
+//
+// Primo avvio:  Capitale = dollari del conto destinati al sistema (gli euro convertiti
+//               al cambio del giorno), ProfittoPrecedente e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 4000     // PER IL TEST: capitale del backtest, in dollari
+ProfittoPrecedente  = 0        // PER IL TEST (originale: 200)
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // PER IL TEST: senza reinvestimento; 1 = posizione proporzionale al capitale attuale
+Leva                = 4        // con Reinvesti = 1 e UsaM4 = 0: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 1        // con Reinvesti = 0 e UsaM4 = 0: contratti a peso 1
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // dollari per 1 $ di movimento di 1 contratto (Spot Gold $1 di IG)
+//=========================================================================
+
+// --- Parametri M4
+UsaM4      = 1                 // 0 = contratti dell'intestazione, 1 = taglia di M4
+ModoM4     = 2                 // 1 = leva costante, 2 = rischio costante allo stop (originale)
+LevaM4     = 4                 // modo 1: valore della posizione / capitale
+RischioM4  = 4                 // modo 2: % del capitale perso allo stop
+LevaMaxM4  = 0                 // modo 2: leva massima (0 = nessun limite, come l'originale)
+
+// --- Parametri della strategia (come l'originale)
+EntraLong       = 1
+EntraShort      = 1
+Escludi2011     = 1            // 1 = come l'originale (niente trade da giugno a novembre 2011)
+
+SLmultL   = 3
+SLmultS   = 3
+TPmultL   = 13
+TPmultS   = 0
+ATRperiod = 20
+
+MyStartTrade     = 110000
+MyEndTrade       = 220000
+MaxDayInTradeL   = 4
+MaxDayInTradeS   = 4
+PortATRpiu       = 2.5
+PortATRMeno      = 5.5
+Once DayInTrade  = 0
+
+// --- Stop e target in percentuale, legati all'escursione media delle ultime 20 ore
+ATRpts = AverageTrueRange[ATRperiod](close)
+MySLL = (SLmultL * ATRpts) / close * 100
+MySLS = (SLmultS * ATRpts) / close * 100
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+
+// --- Capitale attuale, freno e posizioni (intestazione standard)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   ContrattiBase = ContrattiFissi
+ENDIF
+ContrattiBaseL = ContrattiBase
+ContrattiBaseS = ContrattiBase
+
+// --- M4: taglia a leva costante o a rischio costante
+CapitaleBase = Capitale + ProfittoPrecedente
+IF Reinvesti = 1 THEN
+   CapitaleBase = CapitaleAttuale
+ENDIF
+
+IF UsaM4 = 1 THEN
+   IF ModoM4 = 1 THEN
+      ContrattiBaseL = LevaM4 * CapitaleBase / (close * ValorePerPunto)
+      ContrattiBaseS = ContrattiBaseL
+   ELSIF MySLL > 0 AND MySLS > 0 THEN
+      ContrattiBaseL = (RischioM4 / 100) * CapitaleBase / (close * (MySLL / 100) * ValorePerPunto)
+      ContrattiBaseS = (RischioM4 / 100) * CapitaleBase / (close * (MySLS / 100) * ValorePerPunto)
+      IF LevaMaxM4 > 0 THEN
+         ContrattiBaseL = min(ContrattiBaseL, LevaMaxM4 * CapitaleBase / (close * ValorePerPunto))
+         ContrattiBaseS = min(ContrattiBaseS, LevaMaxM4 * CapitaleBase / (close * ValorePerPunto))
+      ENDIF
+   ENDIF
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBaseL * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBaseS * PesoShort * Freno))
+
+// --- Ingressi (come l'originale)
+Time2Trade = 1
+IF Escludi2011 = 1 AND Year = 2011 AND Month >= 6 AND Month <= 11 THEN
+   Time2Trade = 0
+ENDIF
+
+IF Time2Trade THEN
+
+MyTriggerL = close > DOpen(0) + PortATRpiu  * AverageTrueRange[200](close)
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[200](close)
+
+ptnl25 = high[0] > (high[1] + high[1] * 0.5 * 0.01)
+ptns25 = low[0] < (low[1] - low[1] * 0.5 * 0.01)
+
+uptn104 = Dlow(0) > (Dlow(1) + Dlow(1) * 0.01)
+uptn139 = (Dclose(1) < Dopen(1) AND Dclose(2) > Dopen(2))
+
+IF time >= MyStartTrade AND time <= MyEndTrade THEN
+
+// --- LONG
+IF EntraLong AND MyTriggerL AND ptnl25 AND NOT uptn104 THEN
+BUY PsL LOTS AT MARKET
+if MySLL > 0 then
+set stop %loss MySLL
+endif
+if MyTPL > 0 then
+set target %profit MyTPL
+endif
+ENDIF
+
+// --- SHORT
+IF EntraShort AND MyTriggerS AND ptns25 AND NOT uptn139 THEN
+SELLSHORT PsS LOTS AT MARKET
+if MySLS > 0 then
+set stop %loss MySLS
+endif
+if MyTPS > 0 then
+set target %profit MyTPS
+endif
+ENDIF
+ENDIF
+ENDIF
+
+// --- Uscite (come l'originale)
+IF OnMarket <> OnMarket[1] THEN
+DayInTrade = 0
+ENDIF
+
+IF OnMarket AND Day > Day[1] THEN
+DayInTrade = DayInTrade + 1
+ENDIF
+
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL THEN
+SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS THEN
+EXITSHORT AT MARKET
+ENDIF
+
+IF LongOnMarket THEN
+EL0 = barindex - tradeindex > 106 OR (barindex - tradeindex > 80 AND PositionPerf(0) < 0)
+IF EL0 THEN
+SELL AT MARKET
+ENDIF
+ENDIF
+
+IF ShortOnMarket THEN
+ES0 = barindex - tradeindex > 60
+IF ES0 THEN
+EXITSHORT AT MARKET
+ENDIF
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+LevaLong = PsL * close * ValorePerPunto / CapitaleBase
+GRAPH LevaLong AS "leva long"
+GRAPH MySLL AS "stop long %"

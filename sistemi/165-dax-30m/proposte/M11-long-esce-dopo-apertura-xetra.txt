@@ -1,0 +1,176 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M11 (sopra la versione C2 = originale + M5 + M8 + M9)
+// Il long esce dopo l'apertura di Xetra invece che alle 08:00
+//
+// Ipotesi. M6 ha mostrato che il long guadagna soprattutto di notte: chiudere la sera i
+// long in guadagno ha tolto 3.371 € su 11.981. Sui futures azionari americani il rialzo
+// notturno si concentrava tra le 08:00 e le 09:00 italiane, all'apertura dei mercati
+// europei, quando arrivano gli operatori che assorbono gli ordini rimasti dalla sera
+// prima (Boyarchenko-Larsen-Whelan 2023); il long di 165 DAX esce proprio all'inizio di
+// quell'ora. Dal 2021 al 2025 quel rialzo sui futures americani è sparito, quindi il
+// test va letto anche anno per anno.
+// C'è anche un vantaggio di costo che il backtest non vede: su IG lo spread del DAX è
+// 3,8 punti dalle 08:00 alle 09:00 e 1,6 dalle 09:00, quindi uscire dopo le 09:00 fa
+// risparmiare circa 1,1 punti a trade.
+// Direzione attesa: guadagno medio del long uguale o più alto, con il risparmio di
+// spread in più. L'orario delle 08:00 viene probabilmente da un'ottimizzazione (il codice
+// originale conservava un'uscita a 37 barre, che cade esattamente alle 08:00): una
+// perdita sotto 1 € a trade nel backtest è compensata dallo spread.
+// UsaM11 = 0 riproduce la versione di produzione con le impostazioni del test.
+//
+// Varianti: OraUscitaL 090000 (proposta; uscita alle 09:00), 093000 (alle 09:30).
+// Come provarlo: lanciare questo file due volte, UsaM11 = 1 e UsaM11 = 0: la seconda è
+// il riferimento (non l'originale). L'intestazione ha i valori del test: contratti fissi
+// e pesi a 1. Report delle sole posizioni long; il numero di trade non cambia.
+// Come giudicarlo: guadagno medio, drawdown e barre annuali del long; guardare a parte
+// gli anni dal 2021.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 5000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (valuta del DAX e di StrategyProfit)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 5000     // PER IL TEST: capitale del backtest
+ProfittoPrecedente  = 0        // PER IL TEST
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // 1 = posizione proporzionale al capitale attuale; 0 = contratti fissi
+Leva                = 3        // con Reinvesti = 1: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 1        // con Reinvesti = 0: contratti a peso 1
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 1
+MaxContratti        = 80
+ValorePerPunto      = 1        // euro per punto di 1 contratto (Germany 40 Cash 1 €)
+//
+// Pesi. Con Reinvesti = 0 e pesi a 1 il drawdown massimo del backtest 2015-2026 è
+// circa 1.300 € sul long e 740 € sullo short: PesoShort = 1,8 li rende uguali.
+// 1,33 è il rapporto provato in M8 (leva 3 sul long, 4 sullo short).
+// Leva 3 con 7.600 € e il DAX a 26.700 vale 0,85 contratti: finché il capitale non
+// supera circa 8.900 € la posizione la decide il minimo di 1 contratto.
+//=========================================================================
+
+// --- Parametri M11
+UsaM11     = 1                 // 0 = versione di produzione, 1 = modulo attivo
+OraUscitaL = 090000            // orario d'uscita del long con UsaM11 = 1
+
+// --- Parametri della strategia
+EntraLong   = 1
+EntraShort  = 1
+ShortLunedi = 1                // M9: short anche il lunedì
+SogliaVolS  = 1.0              // M5: short solo se volatilità 2 settimane / 5 mesi >= soglia
+TargetShortVolatilita = 0      // M7: 1 = target dello short pari all'escursione media giornaliera
+                               // (provato: non migliora rispetto all'1,4% e alza il drawdown)
+
+MySLL = 3
+MyTPL = 3.5
+MySLS = 2.5
+MyTPS = 1.4
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve  = AverageTrueRange[10](close)
+VolLunga  = AverageTrueRange[100](close)
+ATRGiorno = AverageTrueRange[20](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+// --- Capitale attuale, freno e posizioni
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   ContrattiBase = ContrattiFissi
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Segnali
+GiornoShortOk = dayofweek >= 2 AND dayofweek <= 5
+IF ShortLunedi = 1 THEN
+   GiornoShortOk = dayofweek >= 1 AND dayofweek <= 5
+ENDIF
+
+time2tradeL = time = 133000 and dayofweek <> 5
+time2tradeS = time = 123000 and GiornoShortOk
+TriggerL = close > exponentialaverage[25](close)
+TriggerS = close < exponentialaverage[25](close)
+
+PatternL = rsi[2](close) > 65
+PatternS = not (dlow(1) > dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+// --- Uscite
+OraLong = 080000
+IF UsaM11 = 1 THEN
+   OraLong = OraUscitaL
+ENDIF
+ExitL = (time = OraLong) or (dayofweek = 5 and time = 210000)
+ExitS = Barindex - tradeindex > 12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+
+If LongOnMarket AND MySLL > 0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS > 0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL > 0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS > 0 then
+IF TargetShortVolatilita = 1 AND ATRGiorno > 0 THEN
+set target profit ATRGiorno
+ELSE
+set target %profit MyTPS
+ENDIF
+endif

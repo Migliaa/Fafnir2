@@ -1,0 +1,231 @@
+//-------------------------------------------------------------------------
+// 128 BIAS USDCHF 1H  |  M1, tentativo 1: IL CICLO DI FINE SETTIMANA, RIPULITO
+// Grafico: USD/CHF Mini (10.000 USD, 1 franco per pip), 1 ORA, orari italiani.
+// Tutti i valori in franchi, la valuta di StrategyProfit.
+//
+// L'idea. Il sistema vende il dollaro contro il franco dal mercoledì alle 13:00 al
+// venerdì alle 17:00. Sui cambi gli effetti del giorno della settimana sono spariti
+// dagli anni '90 (fonti/prodotti/usdchf.md, B1), e mesi esclusi, pattern e orari
+// fissati su un solo valore sono i segni di un risultato trovato per caso. Questo
+// tentativo cambia tre cose insieme:
+// 1. toglie febbraio, agosto e i due pattern: resta il calendario nudo;
+// 2. stop in escursioni giornaliere medie (20 giorni) invece che all'1% fisso, con
+//    rischio fisso in franchi: la posizione si riduce quando il cambio è agitato.
+//    Su AUD/JPY la taglia inversa alla volatilità ha ridotto del 25% il drawdown di
+//    uno short dello stesso tipo, a tempo con stop lontano (idee, V3);
+// 3. ora d'ingresso e d'uscita da ottimizzare, per vedere se il guadagno sta in una
+//    zona larga di orari o solo in mercoledì 13:00 / venerdì 17:00. Le ore d'ingresso
+//    da 24 in su sono giovedì (25 = giovedì 01:00): dopo le 23:00 del mercoledì, quando
+//    IG addebita tre notti di finanziamento. Lo short paga circa 1 franco al giorno per
+//    contratto mini, che il backtest non vede: l'ingresso del mercoledì costa nel reale
+//    circa 4 franchi a trade, quello del giovedì 1.
+// Dopo le 17:00 del venerdì il dollaro tende a scendere (fixing di Londra, A3): le
+// uscite alle 19:00 e 21:00 lo misurano.
+//
+// RIFERIMENTO: lo stesso file con UsaM1 = 0 (logica dell'originale, rischio fisso di
+// 90 franchi a trade). NON confrontare con l'originale di Andrea: reinveste con
+// fattore 6 sui profitti e la sua curva dipende dalla taglia.
+//
+// COME PROVARLO (report short)
+// a) UsaM1 = 0: riferimento.
+// b) UsaM1 = 1 con i valori del file: calendario nudo, orari dell'originale, stop
+//    a 1,5 escursioni giornaliere (circa lo 0,8%, vicino all'1% dell'originale).
+// c) Ottimizzazione, con UsaM1 = 1 (315 combinazioni):
+//      OraIngressoS da 9 a 25 passo 2
+//      OraUscitaS   da 13 a 21 passo 2
+//      KStopS       da 0.75 a 2.25 passo 0.25
+//    fino al 31/12/2021, poi verifica dei valori scelti sul 2022-2026. Scegliere il
+//    centro di una zona in cui le combinazioni vicine guadagnano tutte, non il massimo.
+//    Se l'unica zona buona è attorno a 13 / 17, il ciclo dipende da un orario preciso
+//    e va trattato come sovra-adattato.
+// d) Sulla combinazione scelta: TieniMesi = 1 e TieniPattern = 1, uno alla volta.
+//
+// COME GIUDICARLO
+// - Contro il riferimento: profitto / drawdown, guadagno medio per trade (al netto
+//   dei 3 franchi di finanziamento risparmiati se l'ingresso è dopo le 23:00), anni
+//   in perdita dal 2022.
+// - b) peggio del riferimento vuol dire che mesi e pattern facevano il risultato: è
+//   il segno del sovra-adattamento, non un motivo per tenerli.
+// - Un guadagno medio sotto i 6 franchi a trade per contratto (spread più
+//   finanziamento) non sopravvive nel reale.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 1000
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in franchi, la valuta di StrategyProfit su USD/CHF
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA (in franchi)
+//    Primo avvio: CapitaleVersato = soldi messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 6000     // PER IL TEST (franchi; con EUR/CHF a 0,93 circa 6.450 euro)
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop
+RischioLong         = 1.5
+RischioShort        = 1.5      // PER IL TEST: 90 franchi, come il primo trade dell'originale
+
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5      // verificare il minimo di IG sul mini
+MaxContratti        = 80
+ValorePerPunto      = 10000    // franchi per 1,00 di prezzo, 1 contratto mini (10.000 USD)
+//=========================================================================
+
+// --- Interruttori
+UsaM1        = 1               // 0 = logica dell'originale (riferimento)
+TieniMesi    = 0               // con UsaM1 = 1: 1 = niente short a febbraio e agosto
+TieniPattern = 0               // con UsaM1 = 1: 1 = pattern uptn042 e uptn020
+
+EntraLong  = 0
+EntraShort = 1
+
+// --- Parametri dell'originale
+MySLL = 3.5
+MySLS = 1
+MyTPL = 4
+MyTPS = 3.5
+
+// --- Variabili da ottimizzare (solo con UsaM1 = 1)
+OraIngressoS = 13              // ore dalla mezzanotte del mercoledì: 13 = mercoledì 13:00,
+                               // 25 = giovedì 01:00; da 9 a 25 passo 2
+OraUscitaS   = 17              // venerdì; da 13 a 21 passo 2
+KStopS       = 1.5             // stop in escursioni giornaliere medie; da 0.75 a 2.25 passo 0.25
+
+// --- Escursione giornaliera media (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+AtrD = AverageTrueRange[20](close)
+TIMEFRAME(default)
+
+// --- Distanza degli stop
+DistL = close * MySLL / 100
+IF UsaM1 = 1 THEN
+   DistS = KStopS * AtrD
+ELSE
+   DistS = close * MySLS / 100
+ENDIF
+
+// --- Posizioni (dalla console)
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+RischioCHFL = max(0, CapitaleBase) * RischioLong / 100
+RischioCHFS = max(0, CapitaleBase) * RischioShort / 100
+PsL = max(MinContratti, min(MaxContratti, RischioCHFL / (DistL * ValorePerPunto)))
+PsS = max(MinContratti, min(MaxContratti, RischioCHFS / (DistS * ValorePerPunto)))
+
+// --- Ingressi
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL = DayOfWeek=5 AND Time=170000 and month <>7
+
+IF UsaM1 = 0 THEN
+   TriggerS = DayOfWeek=3 AND Time=130000 and month <>8 and month <>2
+ELSE
+   OraSett = (DayOfWeek - 3) * 24 + Hour
+   TriggerS = (DayOfWeek = 3 OR DayOfWeek = 4) AND OraSett = OraIngressoS AND Minute = 0
+   IF TieniMesi = 1 AND (Month = 8 OR Month = 2) THEN
+      TriggerS = 0
+   ENDIF
+ENDIF
+
+// Giorni esclusi: vigilia dei due interventi della BNS. Il 15 gennaio 2015 si aggiunge
+// per gli ingressi del giovedì (ininfluente con UsaM1 = 0).
+If (Day=2 AND month=9 and year=2011) OR ((day=14 OR day=15) AND month=1 AND year=2015) then
+   TriggerL=0
+   TriggerS=0
+endif
+
+uptn104 = (Dlow(0)>Dlow(1)+Dlow(1))
+uptn119 = 0
+if TriggerL then
+   PtnMRLY   = 1
+   PtnMRLN   = 0
+   PtnUNMRLY = uptn104
+   PtnUNMRLN = uptn119
+endif
+
+uptn020 = abs(Open[5]-Close[1]) > 0.7 * (high[5]-low[1])
+uptn042 = Dopen(0)-Dlow(0)<(Dopen(1)-Dlow(1))*1.5
+if TriggerS then
+   PtnMRSY   = 1
+   PtnMRSN   = 0
+   IF UsaM1 = 0 OR TieniPattern = 1 THEN
+      PtnUNMRSY = uptn042
+      PtnUNMRSN = uptn020
+   ELSE
+      PtnUNMRSY = 1
+      PtnUNMRSN = 0
+   ENDIF
+endif
+
+// L'originale entra solo tra le 01:00 e le 22:00; con UsaM1 = 1 decide OraIngressoS
+FinestraOK = (time >= StartTrade and time <= EndTrade) OR UsaM1 = 1
+
+if FinestraOK then
+   if EntraLong AND TriggerL then
+      If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+         buy PsL Lots at Market
+         if MySLL>0 then
+            set stop %loss MySLL
+         endif
+         if MyTPL>0 then
+            set target %profit MyTPL
+         endif
+      endif
+   endif
+
+   if EntraShort AND TriggerS then
+      If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+         sellshort PsS Lots at Market
+         IF UsaM1 = 1 THEN
+            set stop loss DistS
+         ELSE
+            if MySLS>0 then
+               set stop %loss MySLS
+            endif
+         ENDIF
+         if MyTPS>0 then
+            set target %profit MyTPS
+         endif
+      endif
+   endif
+endif
+
+// --- Uscite
+ExitL = LongOnMarket AND DayOfWeek=3 AND (Time=130000 OR barindex-tradeindex>69)
+If longonmarket and barindex-tradeindex>69 then
+   sell at market
+endif
+If ExitL then
+   sell at market
+endif
+
+IF UsaM1 = 0 THEN
+   ExitS = ShortOnMarket AND DayOfWeek=5 AND (Time=170000 OR barindex-tradeindex>51)
+   If shortonmarket and barindex-tradeindex>51 then
+      exitshort at market
+   endif
+ELSE
+   // venerdì all'ora scelta; sicurezza: mai nel fine settimana, mai oltre 70 barre
+   ExitS = ShortOnMarket AND ((DayOfWeek=5 AND Hour >= OraUscitaS) OR DayOfWeek=6 OR DayOfWeek=0 OR barindex-tradeindex>70)
+ENDIF
+If ExitS then
+   exitshort at market
+endif
+
+// --- Controlli (solo backtest)
+GRAPH PsS AS "contratti short"
+GRAPH DistS / close * 100 AS "stop short in %"

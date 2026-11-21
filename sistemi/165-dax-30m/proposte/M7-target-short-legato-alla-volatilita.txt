@@ -1,0 +1,147 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M7 (sopra C1 = originale + M5 sugli short)
+// Target dello short proporzionale all'escursione giornaliera, o nessun target
+//
+// Ipotesi. Con M5 restano solo gli short dei periodi agitati, cioè proprio quelli in cui
+// il movimento della giornata tende a proseguire (momento intraday più forte con
+// volatilità alta: Gao et al. 2018, Li-Sakkas-Urquhart 2022). Il target fisso dell'1,4%
+// (circa 375 punti oggi) taglia i giorni migliori: il vincente più grande degli short
+// nel backtest, 369,80 €, è esattamente il target. Una regola che chiude un trade in
+// anticipo aggiunge valore solo se in quel punto il prezzo tende a tornare indietro
+// (Kaminski-Lo 2014); se il movimento prosegue, il target abbassa il guadagno atteso.
+// Qui il target dello short diventa MoltTP volte l'escursione media giornaliera degli
+// ultimi 20 giorni, che nei periodi agitati vale di solito più dell'1,4%; con MoltTP = 0
+// il target è portato al 10%, cioè di fatto tolto. Stop e uscita a 13 barre invariati.
+// Direzione attesa: guadagno medio dello short più alto, vincente più grande più alto,
+// percentuale di vincenti un po' più bassa. Se invece peggiora, vuol dire che dopo una
+// discesa dell'1,4% in poche ore il DAX tende a rimbalzare, e il target va tenuto.
+// UsaM7 = 0 riproduce C1 con Reinvest = 0.
+//
+// Varianti: MoltTP 1.0 (proposta), 1.5, 0 (nessun target).
+// Come provarlo: Reinvest = 0 (già impostato), report delle sole posizioni short;
+// riferimento C1 con Reinvest = 0. Il numero di trade non cambia.
+// Come giudicarlo: guadagno medio, profitto / drawdown e vincente più grande dello short.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+UsaM7 = 1                 // 0 = C1, 1 = modulo attivo
+MoltTP = 1.0              // target in escursioni medie giornaliere; 0 = nessun target
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+
+// --- Volatilità giornaliera (barre giornaliere chiuse): M5 e target di M7
+SogliaVolS = 1.0
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)
+VolLunga = AverageTrueRange[100](close)
+ATRGiorno = AverageTrueRange[20](close)
+TIMEFRAME(default)
+
+RegimeVol = 1
+IF VolBreve > 0 AND VolLunga > 0 THEN
+   RegimeVol = VolBreve / VolLunga
+ENDIF
+Agitato = RegimeVol >= SogliaVolS
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 0    // PER IL TEST (originale: 1)
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND Agitato then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+// --- Target dello short: originale o M7
+DistanzaTPS = 0
+If ShortOnMarket AND MyTPS>0 then
+   IF UsaM7 = 1 THEN
+      IF MoltTP > 0 AND ATRGiorno > 0 THEN
+         DistanzaTPS = MoltTP * ATRGiorno
+         set target profit DistanzaTPS
+      ELSE
+         set target %profit 10
+      ENDIF
+   ELSE
+      set target %profit MyTPS
+   ENDIF
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH 100 * MoltTP * ATRGiorno / close AS "target short in % del prezzo"

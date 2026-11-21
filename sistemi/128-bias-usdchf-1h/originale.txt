@@ -1,0 +1,145 @@
+//-------------------------------------------------------------------------
+// Codice principale : 128 BIAS USDCHF 1H short
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+EntraLong =0 //ho già cercato tanto il long. non esiste
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3.5
+MySLS=1
+MyTPL=4
+MyTPS=3.5
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+SProfit             = Strategyprofit
+Reinvest            = 1        //Reinvest = 1 ; No Reinvest = 0
+
+FxRate              = 1        //Tasso di cambio EUR/Valuta del prodotto
+ContractValue       = 10000    //Valore del contratto mini
+InitCapital         = 6000     //Suggested Capital to start
+ProductPrice        = close
+RiskOnCapital       = 1        //% di rischio sul capitale iniziale
+RiskOnProfitFactor  = 6        //Moltiplicatore di rischio sui profitti
+MaxPosition         = 80       //Max contract (no more than 10 contract)
+GrowthFactor        = 1.5      //Fattore moltiplicativo per accelerare la crescita
+
+// Calcolo profitti separati dal capitale iniziale
+If Reinvest=0 then
+SProfit = 0
+endif
+
+// Calcolo del rischio totale: capitale iniziale e profitti
+RiskCapitalBase     = (InitCapital * (RiskOnCapital / 100))          // Rischio sul capitale iniziale
+RiskProfit          = (SProfit * (RiskOnCapital / 100) * RiskOnProfitFactor) // Rischio aggiuntivo sui profitti
+
+// Capitale totale da rischiare
+TotalRiskCapital    = RiskCapitalBase + RiskProfit
+
+// Calcolo dello stoploss in EUR
+StopLossEURLong  = ProductPrice * (MySLL / 100) * (ContractValue / FxRate)
+StopLossEURShort = ProductPrice * (MySLS / 100) * (ContractValue / FxRate)
+
+// Calcolo del numero di contratti
+PsL = (TotalRiskCapital / StopLossEURLong) * GrowthFactor
+PsS = (TotalRiskCapital / StopLossEURShort) * GrowthFactor
+
+// Limitazioni sul numero di contratti
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL= DayOfWeek=5 AND Time=170000 and month <>7
+TriggerS=DayOfWeek=3 AND Time=130000 and month <>8 and month <>2
+
+If (Day=2 AND month=9 and year=2011) OR (day=14 AND month=1 AND year=2015) then
+TriggerL=0
+TriggerS=0
+endif
+
+uptn104 = (Dlow(0)>Dlow(1)+Dlow(1))
+uptn119 = 0//(close[1]-low[1])<(0.20*(High[1]-Low[1]))
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = 0
+PtnUNMRLY = uptn104
+PtnUNMRLN = uptn119
+endif
+
+uptn020 = abs(Open[5]-Close[1]) > 0.7 * (high[5]-low[1])
+uptn042 = Dopen(0)-Dlow(0)<(Dopen(1)-Dlow(1))*1.5
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = 0
+PtnUNMRSY = uptn042
+PtnUNMRSN = uptn020
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+//buy TagliaPosizione contract at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+//sellshort TagliaPosizione contract at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+//Uscite
+ExitL =LongOnMarket  AND DayOfWeek=3 AND (Time=130000 OR barindex-tradeindex>69)
+ExitS =ShortOnMarket AND DayOfWeek=5 AND (Time=170000 OR barindex-tradeindex>51)
+
+If longonmarket and barindex-tradeindex>69 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>51 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif

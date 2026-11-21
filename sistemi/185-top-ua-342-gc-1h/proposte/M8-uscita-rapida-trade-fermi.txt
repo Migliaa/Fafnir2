@@ -1,0 +1,234 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 GC 1H  |  MODULO M8 (sopra C0)
+// Uscita rapida dei trade che non partono
+//
+// Ipotesi. Una rottura vera prosegue subito: il vantaggio di una gamba di momento si
+// vede nelle prime ore, e uno stop che chiude presto i trade fermi aggiunge valore quando
+// i rendimenti hanno inerzia (Kaminski, Lo 2014; Lo, Remorov 2017). Nell'originale i
+// perdenti restano aperti in media 26 barre (long) e 25 (short) prima di prendere lo stop
+// pieno, mentre i vincenti durano 73 e 54 barre: chi dopo mezza giornata è ancora sotto
+// il prezzo d'ingresso è con buona probabilità una rottura fallita. L'originale ha già la
+// stessa regola, ma a 80 barre e solo sul long.
+// Qui, alla barra BarreM8 dopo l'ingresso, il trade che chiude in perdita esce subito.
+// Effetto voluto anche sui costi: meno ore in posizione, meno finanziamento notturno.
+// Direzione attesa: perdente medio più piccolo, qualche vincente in meno, profit factor e
+// rapporto profitto / drawdown più alti su entrambi i lati.
+// UsaM8 = 0 riproduce C0.
+//
+// Varianti: BarreM8 10 (proposta), 6 (più severa), 20.
+// Impostazioni del test: quelle del tuo originale (Reinvesti = 1, 4.000 + 200 €), quindi
+// il riferimento è l'originale che hai già lanciato: long 11.866,52 €, DD -1.035,03 €;
+// short 6.409,62 €, DD -779,26 €. Con il reinvestimento il capitale è comune ai due lati:
+// un modulo che cambia un lato sposta di poco anche l'altro.
+// Come giudicarlo, per lato: rapporto profitto / drawdown, profit factor, perdente medio
+// e durata media dei perdenti.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in euro (Spot Gold E1: 1 € per punto)
+//
+// Primo avvio:  Capitale = euro del conto destinati al sistema, ProfittoPrecedente
+//               e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Aggressivita        = 1        // manopola del rischio: 1 = come l'originale (4% a stop pieno);
+                               // 1.25 = rischio e drawdown circa +25%, 0.75 = circa -25%
+Capitale            = 4000     // PER IL TEST: capitale su cui si calcola il rischio
+ProfittoPrecedente  = 200      // PER IL TEST: come il tuo originale
+PiccoPrecedente     = 0
+
+Reinvesti           = 1        // PER IL TEST: come il tuo originale (0 = rischio fisso)
+RischioStop         = 4        // % del capitale persa a stop pieno: posizione = rischio / distanza dello stop
+LevaMaxL            = 0        // leva massima del long (valore della posizione / capitale); 0 = nessun limite
+LevaMaxS            = 0        // leva massima dello short; 0 = nessun limite
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // euro per punto di 1 contratto (Spot Gold E1)
+//
+// RischioStop sostituisce la Leva dell'intestazione standard perché lo stop di questo
+// sistema segue la volatilità: la leva risultante è RischioStop / stop %, alta quando
+// l'oro è calmo (circa 6 nel 2016-2019), bassa quando è agitato.
+// Con Reinvesti = 0 ogni stop pieno costa RischioStop% di Capitale (160 € con 4.000 €)
+// e il drawdown in euro è proporzionale a RischioStop: si tara alla fine per stare nel
+// drawdown voluto.
+// Aggressivita moltiplica RischioStop e le leve massime: è l'unico numero da toccare per
+// rendere il sistema più o meno aggressivo. Con il reinvestimento il drawdown cresce un
+// po' più che in proporzione, perché i profitti più grandi fanno crescere prima la taglia.
+//=========================================================================
+
+// --- Parametri M8
+UsaM8          = 1             // 0 = C0, 1 = modulo attivo
+BarreM8        = 10            // barre dopo l'ingresso a cui si controlla il trade
+ApplicaLongM8  = 1
+ApplicaShortM8 = 1
+
+// --- Parametri della strategia (come l'originale)
+EntraLong       = 1
+EntraShort      = 1
+Escludi2011     = 1            // 1 = come l'originale (niente trade da giugno a novembre 2011)
+
+SLmultL   = 3
+SLmultS   = 3
+TPmultL   = 13
+TPmultS   = 0
+ATRperiod = 20
+
+MyStartTrade     = 110000
+MyEndTrade       = 220000
+MaxDayInTradeL   = 4
+MaxDayInTradeS   = 4
+PortATRpiu       = 2.5
+PortATRMeno      = 5.5
+Once DayInTrade  = 0
+
+// --- Stop e target in percentuale, legati all'escursione media delle ultime 20 ore
+ATRpts = AverageTrueRange[ATRperiod](close)
+MySLL = (SLmultL * ATRpts) / close * 100
+MySLS = (SLmultS * ATRpts) / close * 100
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+
+// --- Capitale attuale, freno e posizioni (intestazione standard, variante a rischio)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+CapitaleRischio = Capitale + ProfittoPrecedente
+IF Reinvesti = 1 THEN
+   CapitaleRischio = CapitaleAttuale
+ENDIF
+
+StopPuntiL = SLmultL * ATRpts          // distanza dello stop in punti
+StopPuntiS = SLmultS * ATRpts
+
+RischioEff = RischioStop * Aggressivita
+ContrattiBaseL = 0
+ContrattiBaseS = 0
+IF StopPuntiL > 0 THEN
+   ContrattiBaseL = (RischioEff / 100) * CapitaleRischio / (StopPuntiL * ValorePerPunto)
+ENDIF
+IF StopPuntiS > 0 THEN
+   ContrattiBaseS = (RischioEff / 100) * CapitaleRischio / (StopPuntiS * ValorePerPunto)
+ENDIF
+IF LevaMaxL > 0 THEN
+   ContrattiBaseL = min(ContrattiBaseL, LevaMaxL * Aggressivita * CapitaleRischio / (close * ValorePerPunto))
+ENDIF
+IF LevaMaxS > 0 THEN
+   ContrattiBaseS = min(ContrattiBaseS, LevaMaxS * Aggressivita * CapitaleRischio / (close * ValorePerPunto))
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBaseL * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBaseS * PesoShort * Freno))
+
+// --- Ingressi (come l'originale)
+Time2Trade = 1
+IF Escludi2011 = 1 AND Year = 2011 AND Month >= 6 AND Month <= 11 THEN
+   Time2Trade = 0
+ENDIF
+
+IF Time2Trade THEN
+
+MyTriggerL = close > DOpen(0) + PortATRpiu  * AverageTrueRange[200](close)
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[200](close)
+
+ptnl25 = high[0] > (high[1] + high[1] * 0.5 * 0.01)
+ptns25 = low[0] < (low[1] - low[1] * 0.5 * 0.01)
+
+uptn104 = Dlow(0) > (Dlow(1) + Dlow(1) * 0.01)
+uptn139 = (Dclose(1) < Dopen(1) AND Dclose(2) > Dopen(2))
+
+IF time >= MyStartTrade AND time <= MyEndTrade THEN
+
+// --- LONG
+IF EntraLong AND MyTriggerL AND ptnl25 AND NOT uptn104 THEN
+BUY PsL LOTS AT MARKET
+if MySLL > 0 then
+set stop %loss MySLL
+endif
+if MyTPL > 0 then
+set target %profit MyTPL
+endif
+ENDIF
+
+// --- SHORT
+IF EntraShort AND MyTriggerS AND ptns25 AND NOT uptn139 THEN
+SELLSHORT PsS LOTS AT MARKET
+if MySLS > 0 then
+set stop %loss MySLS
+endif
+if MyTPS > 0 then
+set target %profit MyTPS
+endif
+ENDIF
+ENDIF
+ENDIF
+
+// --- Uscite (come l'originale)
+IF OnMarket <> OnMarket[1] THEN
+DayInTrade = 0
+ENDIF
+
+IF OnMarket AND Day > Day[1] THEN
+DayInTrade = DayInTrade + 1
+ENDIF
+
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL THEN
+SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS THEN
+EXITSHORT AT MARKET
+ENDIF
+
+// M8: alla barra BarreM8 chi è ancora in perdita esce
+IF UsaM8 = 1 AND barindex - tradeindex = BarreM8 THEN
+   IF ApplicaLongM8 = 1 AND LongOnMarket AND close < PositionPrice THEN
+      SELL AT MARKET
+   ENDIF
+   IF ApplicaShortM8 = 1 AND ShortOnMarket AND close > PositionPrice THEN
+      EXITSHORT AT MARKET
+   ENDIF
+ENDIF
+
+IF LongOnMarket THEN
+EL0 = barindex - tradeindex > 106 OR (barindex - tradeindex > 80 AND PositionPerf(0) < 0)
+IF EL0 THEN
+SELL AT MARKET
+ENDIF
+ENDIF
+
+IF ShortOnMarket THEN
+ES0 = barindex - tradeindex > 60
+IF ES0 THEN
+EXITSHORT AT MARKET
+ENDIF
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+BarreInPosizione = 0
+IF OnMarket THEN
+   BarreInPosizione = barindex - tradeindex
+ENDIF
+GRAPH BarreInPosizione AS "barre in posizione"

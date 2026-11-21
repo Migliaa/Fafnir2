@@ -1,0 +1,156 @@
+//-------------------------------------------------------------------------
+// Codice principale : 097 BRK IN GBPJPY 30min long
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 097 BRK IN GBPJPY 1H
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False // Acumulación de posiciones desactivada
+
+EntraLong       = 1
+EntraShort      = 0
+BuyLotti        = 1
+TagliaPosizione = 1
+
+MySLL=0.75
+MySLS=1
+
+MyTPL=2
+MyTPS=5.5
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+SProfit             = Strategyprofit
+Reinvest            = 1     //Reinvest = 1 ; No Reinvest = 0
+InitCapital         = 6000   //Suggested Capital to start
+RiskOnCapital       = 0.018    //% di rischio sul capitale iniziale
+RiskOnProfit        = 0.15     //% di rischio sui profitti
+MaxPosition         = 80      //Max contract (no more than 80 contracts)
+
+// Gestione dei profitti separati
+If Reinvest = 0 then
+SProfit = 0
+endif
+
+// Calcolo del rischio totale separato
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)   // Rischio sul capitale iniziale
+RiskProfit          = (SProfit / close) * (RiskOnProfit / 100)  // Rischio aggiuntivo sui profitti
+
+// Calcolo del numero di contratti
+PsL = ((RiskCapitalBase + RiskProfit) / (close * (MySLL / 100)))
+PsS = ((RiskCapitalBase + RiskProfit) / (close * (MySLS / 100)))
+
+// Limitazioni sul numero di contratti
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+If Time=033000 then
+LivelloHigh = DHigh(0)
+LivelloLow  = DLow(0)
+endif
+
+TriggerL = time=103000
+TriggerS = time=010000
+
+ExitL    = time=220000
+ExitS    = time=103000
+
+TriggerWL=dayofweek=1 OR dayofweek=3
+TriggerWS=dayofweek=2 OR dayofweek=4 OR dayofweek=5
+
+If day=24 AND month=6 AND year=2016 then
+TriggerL=0
+TriggerS=0
+endif
+
+varmax=max(Dhigh(1), Dhigh(2))
+varmax=max(varmax, Dhigh(3))
+varmax=max(varmax, Dhigh(4))
+varmax=max(varmax, Dhigh(5))
+
+varmin=min(Dlow(1),  Dlow(2))
+varmin=min(varmin, Dlow(3))
+varmin=min(varmin, Dlow(4))
+varmin=min(varmin, Dlow(5))
+
+range5d = varmax-varmin
+body5d  = abs(DOpen(5)-DClose(1))
+uptn027 = 1//body5d < 0.9  * range5d
+uptn133 = (High[1]-Low[1] < (high[2]-low[2])*1.1) and ((high[2]-low[2]) < (high[3]-low[3])*0.75)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = 0
+PtnUNMRLY = uptn027
+PtnUNMRLN = uptn133
+endif
+
+uptn068 = ((Dhigh(0)<(Dlow(0)+Dlow(0)*0.009)))
+uptn114 = ((low[1]<low[2]) AND (low[1] < low[3]) and (low[1] < low[4]))
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = 0
+PtnUNMRSY = uptn068
+PtnUNMRSN = uptn114
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL AND TriggerWL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+If BuyLotti then
+buy PsL Lots at LivelloHigh stop
+else
+buy TagliaPosizione Contract at LivelloHigh stop
+endif
+if MySLL>0 then
+set stop %loss MySLL
+endif
+
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS AND TriggerWS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+
+If BuyLotti then
+sellshort PsS Lots at LivelloLow stop
+else
+sellshort TagliaPosizione contract at LivelloLow stop
+endif
+
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and (ExitL OR barindex-tradeindex>22) then
+sell at market
+endif
+
+If shortonmarket and (ExitS OR barindex-tradeindex>18) then
+exitshort at market
+endif

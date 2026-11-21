@@ -1,0 +1,143 @@
+//-------------------------------------------------------------------------
+// 128 BIAS HOUR - AUDJPY 1H  |  MODULO M5
+// Opera solo nella direzione del trend di fondo (momentum di serie storica)
+//
+// Long solo se il prezzo è sopra la media degli ultimi GiorniTrend giorni,
+// short solo se è sotto. Il segnale settimanale del sistema resta identico:
+// il filtro scarta i trade che vanno contro la direzione dei mesi precedenti.
+// Ci si aspetta meno trade e un guadagno medio più alto; se il vantaggio del
+// sistema viene da rimbalzi contro trend, il filtro peggiora i risultati e va
+// scartato.
+// UsaM5 = 0 riproduce esattamente l'originale con Reinvest = 0.
+// Fonti: Moskowitz-Ooi-Pedersen 2012.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 5000
+
+UsaM5 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong =1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=0.4
+MySLS=2
+MyTPL=2
+MyTPS=3.4
+
+// --- Parametri M5 (prova solo 50 / 100 / 200, non valori intermedi)
+GiorniTrend    = 100
+FiltraLong     = 1        // 1 = applica il filtro ai long
+FiltraShort    = 1        // 1 = applica il filtro agli short
+
+PeriodoTrend = GiorniTrend * 24          // barre orarie (il forex su IG quota 24 ore)
+MediaTrend   = Average[PeriodoTrend](close)
+
+FiltroL = 1
+FiltroS = 1
+IF UsaM5 = 1 THEN
+   IF FiltraLong = 1 AND close < MediaTrend THEN
+      FiltroL = 0
+   ENDIF
+   IF FiltraShort = 1 AND close > MediaTrend THEN
+      FiltroS = 0
+   ENDIF
+ENDIF
+
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+InitCapital         = 3000
+RiskOnCapital       = 0.15
+MaxPosition         = 80
+
+RiskCapitalBase     = InitCapital * (RiskOnCapital / 100)
+
+PsL = RiskCapitalBase / ((close * (MySLL / 100)) * 3)
+PsS = RiskCapitalBase / (close * (MySLS / 100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+////==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL=DayOfWeek=1 AND Time=030000
+TriggerS=DayOfWeek=4 AND Time=120000
+
+ExitL =LongOnMarket  AND DayOfWeek=3 AND Time=220000
+ExitS =ShortOnMarket AND DayOfWeek=5 AND Time=180000
+
+uptn091 = high[0]<high[1]
+uptn049 = Dclose(1)>Dclose(2) and Dclose(2)>Dclose(3) and Dclose(3)>Dclose(4)
+if TriggerL then
+PtnMRLY   = 1
+PtnMRLN   = uptn049
+PtnUNMRLY = 1
+PtnUNMRLN = uptn091
+endif
+
+uptn134 = (Dhigh(2)>Dhigh(1) and Dlow(2)<Dlow(1))
+uptn142 = (close[1] > open[1] and  close[2] < open[2])
+if TriggerS then
+PtnMRSY   = 1
+PtnMRSN   = uptn134
+PtnUNMRSY = 1
+PtnUNMRSN = uptn142
+endif
+
+// Entrate
+if time >= StartTrade and time <= EndTrade then
+if EntraLong AND TriggerL AND FiltroL then
+If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+buy PsL Lots at Market
+if MySLL>0 then
+set stop %loss MySLL
+endif
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+endif
+endif
+
+if EntraShort AND TriggerS AND FiltroS then
+If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+sellshort PsS Lots at Market
+if MySLS>0 then
+set stop %loss MySLS
+endif
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+endif
+endif
+endif
+
+If longonmarket and barindex-tradeindex>66 then
+sell at market
+endif
+
+If shortonmarket and barindex-tradeindex>29 then
+exitshort at market
+endif
+
+If ExitL then
+sell at market
+endif
+
+If ExitS then
+exitshort at market
+endif

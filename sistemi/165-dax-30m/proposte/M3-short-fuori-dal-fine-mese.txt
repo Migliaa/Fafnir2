@@ -1,0 +1,186 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M3
+// Niente short nei giorni a cavallo del cambio di mese
+//
+// Ipotesi. In 31 borse su 35 il rendimento dell'ultimo giorno di borsa del mese e dei
+// primi tre del mese successivo è più alto di quello degli altri giorni, senza un
+// rischio più alto che lo giustifichi (McConnell-Xu 2008); sulle azioni tedesche la
+// stessa stagionalità dipende soprattutto dalla liquidità e cade tra 4 giorni prima e
+// 2 giorni dopo la fine del mese (Weigerding-Hanke 2018). Lo short di 165 DAX aperto in
+// quei giorni va contro un flusso in acquisto documentato, quindi dovrebbe guadagnare
+// in media meno degli altri short. Il long non cambia, salvo con ApplicaLong = 1.
+// I giorni di borsa sono contati escludendo sabati e domeniche, non le festività: a
+// fine dicembre (24 e 31 Xetra chiusa) la finestra può spostarsi di un giorno.
+// UsaM3 = 0 riproduce l'originale con Reinvest = 0.
+//
+// Varianti:
+//   GiorniPrima 1 / GiorniDopo 3   finestra di McConnell-Xu (proposta)
+//   GiorniPrima 4 / GiorniDopo 2   finestra trovata sulle azioni tedesche
+// La finestra copre circa 4 giorni su 21 per la prima variante e 6 su 21 per la
+// seconda, quindi toglie circa il 20% o il 30% degli short.
+//
+// Come provarlo: Reinvest = 0 (già impostato qui sotto), così la taglia dipende solo
+// dal prezzo d'ingresso e i trade scartati sono la differenza esatta tra originale e
+// modulo. Lanciare UsaM3 = 0 e UsaM3 = 1, report delle sole posizioni short.
+// Come giudicarlo: guadagno medio degli short scartati =
+//   (profitto short originale - profitto short M3) / (trade short originale - trade short M3)
+// M3 funziona se questo valore è chiaramente più basso del guadagno medio degli short
+// tenuti; se è simile, il filtro toglie solo profitto (lezione di 128 BIAS HOUR, M5).
+// Con ApplicaLong = 1 (e ApplicaShort = 0) lo stesso calcolo misura i long a fine mese:
+// se guadagnano più degli altri, è un'informazione per la tornata successiva.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+
+UsaM3 = 1                 // 0 = originale, 1 = modulo attivo
+ApplicaShort = 1          // niente short nella finestra di fine mese
+ApplicaLong  = 0          // 1 = niente long nella finestra (solo per misurarli)
+GiorniPrima  = 1          // giorni di borsa prima della fine del mese, compreso l'ultimo
+GiorniDopo   = 3          // primi giorni di borsa del mese
+
+// --- Posizione nel mese (calcolata solo agli orari d'ingresso)
+FineMese = 0
+IF UsaM3 = 1 AND (time = 123000 OR time = 133000) THEN
+   GiorniMese = 31
+   IF Month = 4 OR Month = 6 OR Month = 9 OR Month = 11 THEN
+      GiorniMese = 30
+   ENDIF
+   IF Month = 2 THEN
+      GiorniMese = 28
+      IF Year = 2008 OR Year = 2012 OR Year = 2016 OR Year = 2020 OR Year = 2024 OR Year = 2028 THEN
+         GiorniMese = 29
+      ENDIF
+   ENDIF
+
+   // giorni di borsa rimasti nel mese dopo oggi (0 = oggi è l'ultimo)
+   Rimasti = 0
+   IF Day < GiorniMese THEN
+      g = DayOfWeek
+      FOR k = Day + 1 TO GiorniMese DO
+         g = g + 1
+         IF g = 7 THEN
+            g = 0
+         ENDIF
+         IF g >= 1 AND g <= 5 THEN
+            Rimasti = Rimasti + 1
+         ENDIF
+      NEXT
+   ENDIF
+
+   // giorni di borsa dall'inizio del mese, oggi compreso (1 = primo giorno)
+   GiornoDelMese = 0
+   g = DayOfWeek
+   FOR k = 1 TO Day DO
+      IF g >= 1 AND g <= 5 THEN
+         GiornoDelMese = GiornoDelMese + 1
+      ENDIF
+      g = g - 1
+      IF g < 0 THEN
+         g = 6
+      ENDIF
+   NEXT
+
+   IF Rimasti <= GiorniPrima - 1 OR GiornoDelMese <= GiorniDopo THEN
+      FineMese = 1
+   ENDIF
+ENDIF
+
+FiltroL = 1
+FiltroS = 1
+IF FineMese = 1 THEN
+   IF ApplicaLong = 1 THEN
+      FiltroL = 0
+   ENDIF
+   IF ApplicaShort = 1 THEN
+      FiltroS = 0
+   ENDIF
+ENDIF
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 0    // PER IL TEST (originale: 1)
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL AND FiltroL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS AND FiltroS then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH FineMese AS "finestra di fine mese"

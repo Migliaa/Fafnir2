@@ -1,0 +1,214 @@
+//-------------------------------------------------------------------------
+// 185 TOP UA 342 GC 1H  |  MODULO M3
+// Long solo se l'oro è più alto di un anno fa, short solo se è più basso
+//
+// Ipotesi. Il rendimento degli ultimi 12 mesi di un future predice il segno di quello
+// successivo anche sulle materie prime (Moskowitz, Ooi, Pedersen 2012; Hurst, Ooi,
+// Pedersen su oltre un secolo), perché chi investe reagisce alle informazioni con
+// lentezza e i flussi seguono il trend. Lo short di questo sistema vende i crolli della
+// giornata contro la salita di lungo periodo dell'oro, che dal 2001 si è interrotta solo
+// nel 2011-2015 e da gennaio 2026: se il crollo prosegue per giorni solo quando anche il
+// trend di fondo è in calo, gli short contro il trend sono quelli deboli. Per il long
+// vale l'opposto, con un'attesa più debole, perché l'oro come rifugio sale a ondate anche
+// nei mercati in calo (fonti/prodotti/oro.md, A2 e A3).
+// Il filtro sul trend di fondo è stato smentito su 128 BIAS HOUR (S1), ma lì il vantaggio
+// era di calendario; qui le gambe sono di momento, che è il caso studiato dal paper.
+// Direzione attesa: guadagno medio dei trade scartati più basso di quello dei tenuti,
+// soprattutto sullo short. Dopo il 2009 il momento di lungo periodo sulle materie prime
+// si è indebolito, quindi l'effetto può essere modesto.
+// UsaM3 = 0 riproduce l'originale a 1 contratto (BuyLot = 0), salvo i primi giorni del
+// backtest per le barre precaricate (nel primo anno il filtro non ha dati sufficienti).
+//
+// Varianti: GiorniM3 250 (12 mesi, proposta), 125 (6 mesi). Se lo short scarta quasi
+// tutti i trade, provare ApplicaShortM3 = 1 e ApplicaLongM3 = 0 separatamente.
+// Come provarlo: lanciare UsaM3 = 1 e UsaM3 = 0 (riferimento, lo stesso di M1 e M2),
+// report long e short separati.
+// Come giudicarlo, per ciascun lato: guadagno medio dei trade scartati =
+//   (profitto riferimento - profitto M3) / (trade riferimento - trade M3)
+// Gli short sono probabilmente pochi: con meno di 100 trade scartati l'incertezza sul
+// loro guadagno medio è ampia, e un risultato prodotto da pochi trade non è una prova.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 10000
+
+//=========================================================================
+// GESTIONE DEL CAPITALE  -  tutto in dollari (valuta dell'oro e di StrategyProfit)
+//
+// Primo avvio:  Capitale = dollari del conto destinati al sistema (gli euro convertiti
+//               al cambio del giorno), ProfittoPrecedente e PiccoPrecedente a 0.
+// Riavvio:      StrategyProfit riparte da zero, quindi riporta a mano
+//               ProfittoPrecedente = profitti realizzati nelle esecuzioni precedenti
+//               PiccoPrecedente    = capitale più alto raggiunto finora (serve solo
+//                                    con il freno; 0 = riparte dal capitale attuale)
+// Versamenti o prelievi: cambia Capitale, lascia ProfittoPrecedente com'è.
+// Backtest:     Capitale = capitale del backtest, gli altri due a 0.
+//=========================================================================
+Capitale            = 4000     // PER IL TEST: capitale del backtest, in dollari
+ProfittoPrecedente  = 0        // PER IL TEST (originale: 200)
+PiccoPrecedente     = 0
+
+Reinvesti           = 0        // PER IL TEST: contratti fissi; 1 = posizione proporzionale al capitale attuale
+Leva                = 4        // con Reinvesti = 1: valore della posizione / capitale, a peso 1
+ContrattiFissi      = 1        // con Reinvesti = 0: contratti a peso 1
+
+PesoLong            = 1        // moltiplicatore della posizione long
+PesoShort           = 1        // moltiplicatore della posizione short
+
+UsaFreno            = 0        // 1 = posizione ridotta durante i drawdown
+MaxDD               = 0.40     // drawdown dal massimo a cui la posizione arriva a FrenoMinimo
+FrenoMinimo         = 0.4
+
+MinContratti        = 0.5
+MaxContratti        = 80
+ValorePerPunto      = 1        // dollari per 1 $ di movimento di 1 contratto (Spot Gold $1 di IG)
+//
+// Leva 4 vale circa il 4% di rischio dell'originale con uno stop all'1%: quale delle due
+// formule tenere lo decide M4.
+//=========================================================================
+
+// --- Parametri M3
+UsaM3          = 1             // 0 = originale, 1 = modulo attivo
+GiorniM3       = 250           // barre giornaliere del confronto (250 = circa 12 mesi)
+ApplicaLongM3  = 1
+ApplicaShortM3 = 1
+
+// --- Trend di fondo (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+TrendFondo = close - close[GiorniM3]
+TIMEFRAME(default)
+
+FiltroL = 1
+FiltroS = 1
+IF UsaM3 = 1 THEN
+   IF ApplicaLongM3 = 1 AND TrendFondo < 0 THEN
+      FiltroL = 0
+   ENDIF
+   IF ApplicaShortM3 = 1 AND TrendFondo > 0 THEN
+      FiltroS = 0
+   ENDIF
+ENDIF
+
+// --- Parametri della strategia (come l'originale)
+EntraLong       = 1
+EntraShort      = 1
+Escludi2011     = 1            // 1 = come l'originale (niente trade da giugno a novembre 2011)
+
+SLmultL   = 3
+SLmultS   = 3
+TPmultL   = 13
+TPmultS   = 0
+ATRperiod = 20
+
+MyStartTrade     = 110000
+MyEndTrade       = 220000
+MaxDayInTradeL   = 4
+MaxDayInTradeS   = 4
+PortATRpiu       = 2.5
+PortATRMeno      = 5.5
+Once DayInTrade  = 0
+
+// --- Stop e target in percentuale, legati all'escursione media delle ultime 20 ore
+ATRpts = AverageTrueRange[ATRperiod](close)
+MySLL = (SLmultL * ATRpts) / close * 100
+MySLS = (SLmultS * ATRpts) / close * 100
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+
+// --- Capitale attuale, freno e posizioni (intestazione standard)
+CapitaleAttuale = Capitale + ProfittoPrecedente + StrategyProfit
+
+ONCE PiccoCapitale = max(PiccoPrecedente, Capitale + ProfittoPrecedente)
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+
+Freno = 1
+IF UsaFreno = 1 THEN
+   Freno = (CapitaleAttuale - (1 - MaxDD) * PiccoCapitale) / (MaxDD * PiccoCapitale)
+   Freno = max(FrenoMinimo, min(1, Freno))
+ENDIF
+
+IF Reinvesti = 1 THEN
+   ContrattiBase = Leva * CapitaleAttuale / (close * ValorePerPunto)
+ELSE
+   ContrattiBase = ContrattiFissi
+ENDIF
+
+PsL = max(MinContratti, min(MaxContratti, ContrattiBase * PesoLong * Freno))
+PsS = max(MinContratti, min(MaxContratti, ContrattiBase * PesoShort * Freno))
+
+// --- Ingressi (come l'originale, più il filtro M3)
+Time2Trade = 1
+IF Escludi2011 = 1 AND Year = 2011 AND Month >= 6 AND Month <= 11 THEN
+   Time2Trade = 0
+ENDIF
+
+IF Time2Trade THEN
+
+MyTriggerL = close > DOpen(0) + PortATRpiu  * AverageTrueRange[200](close)
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[200](close)
+
+ptnl25 = high[0] > (high[1] + high[1] * 0.5 * 0.01)
+ptns25 = low[0] < (low[1] - low[1] * 0.5 * 0.01)
+
+uptn104 = Dlow(0) > (Dlow(1) + Dlow(1) * 0.01)
+uptn139 = (Dclose(1) < Dopen(1) AND Dclose(2) > Dopen(2))
+
+IF time >= MyStartTrade AND time <= MyEndTrade THEN
+
+// --- LONG
+IF EntraLong AND MyTriggerL AND ptnl25 AND NOT uptn104 AND FiltroL THEN
+BUY PsL LOTS AT MARKET
+if MySLL > 0 then
+set stop %loss MySLL
+endif
+if MyTPL > 0 then
+set target %profit MyTPL
+endif
+ENDIF
+
+// --- SHORT
+IF EntraShort AND MyTriggerS AND ptns25 AND NOT uptn139 AND FiltroS THEN
+SELLSHORT PsS LOTS AT MARKET
+if MySLS > 0 then
+set stop %loss MySLS
+endif
+if MyTPS > 0 then
+set target %profit MyTPS
+endif
+ENDIF
+ENDIF
+ENDIF
+
+// --- Uscite (come l'originale)
+IF OnMarket <> OnMarket[1] THEN
+DayInTrade = 0
+ENDIF
+
+IF OnMarket AND Day > Day[1] THEN
+DayInTrade = DayInTrade + 1
+ENDIF
+
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL THEN
+SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS THEN
+EXITSHORT AT MARKET
+ENDIF
+
+IF LongOnMarket THEN
+EL0 = barindex - tradeindex > 106 OR (barindex - tradeindex > 80 AND PositionPerf(0) < 0)
+IF EL0 THEN
+SELL AT MARKET
+ENDIF
+ENDIF
+
+IF ShortOnMarket THEN
+ES0 = barindex - tradeindex > 60
+IF ES0 THEN
+EXITSHORT AT MARKET
+ENDIF
+ENDIF
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH TrendFondo AS "prezzo di oggi - prezzo di un anno fa"

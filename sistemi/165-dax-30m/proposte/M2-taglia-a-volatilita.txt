@@ -1,0 +1,152 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M2
+// Taglia inversamente proporzionale alla volatilità recente, su entrambe le gambe
+//
+// Ipotesi. Entrambe le gambe escono quasi sempre a tempo: il long dopo circa 18 ore e
+// mezza (alle 08:00), lo short dopo 7 ore (alle 19:30). Gli stop del 3% e del 2,5%
+// valgono più del doppio dell'escursione di una giornata normale del DAX e scattano di
+// rado, quindi la perdita vera di un trade dipende da quanto si muove il DAX in quelle
+// ore, non dallo stop. La formula originale fissa il valore della posizione
+// (contratti x prezzo): in un periodo agitato come il 2020 o il 2022 il rischio in euro
+// di ogni trade è il doppio o il triplo di quello di un periodo calmo.
+// È il meccanismo per cui la taglia a volatilità ha funzionato sullo short di
+// 128 BIAS HOUR (M8: drawdown -25%, profitto +7%), mentre sulle posizioni con stop
+// stretto ha peggiorato i risultati (M2 di quel sistema). Sugli indici azionari la
+// ragione è più forte che sulle valute, perché la volatilità si raggruppa nel tempo e
+// sale quando il mercato scende (Harvey et al. 2018, Moreira-Muir 2017; studi
+// successivi non trovano un miglioramento sistematico del rendimento, ma la riduzione
+// dei drawdown è costante).
+// La taglia viene moltiplicata per volatilità degli ultimi 100 giorni / volatilità
+// degli ultimi 10 giorni, tra 0,5 e 1,5.
+//
+// Forza contraria: il momento intraday, su cui sembra basarsi il sistema, è più forte
+// nei periodi agitati (Gao et al. 2018, Li-Sakkas-Urquhart 2022). Se il guadagno per
+// trade cresce con la volatilità più del rischio, M2 toglie più profitto che drawdown.
+// M5 misura direttamente questo punto.
+//
+// Come provarlo. Il minimo di 1 contratto e il reinvestimento nasconderebbero l'effetto
+// (con 6.000 € la formula dà meno di 1 contratto e il minimo lo riporta a 1), quindi il
+// blocco PER IL TEST qui sotto mette InitCapital = 60000 e Reinvest = 0: la taglia
+// vale qualche contratto e non dipende dai profitti. Lanciare UsaM2 = 0 e UsaM2 = 1 con
+// queste impostazioni; nel backtest il capitale iniziale va messo a 60.000 €.
+// Con UsaM2 = 0 si ottiene l'originale con queste impostazioni (identico salvo i primi
+// giorni del backtest, per le barre precaricate).
+// Varianti: 10 giorni (proposta), poi 5 e 20 cambiando il numero in
+// AverageTrueRange[10] nel blocco TIMEFRAME.
+// Come giudicarlo: report long e short separati. Ci si aspetta drawdown e perdita
+// peggiore più bassi con profitto simile o di poco inferiore, cioè un rapporto
+// profitto / drawdown più alto su ciascun lato.
+//
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+DEFPARAM PreLoadBars = 5000
+
+UsaM2 = 1                 // 0 = originale, 1 = modulo attivo
+
+// --- Volatilità giornaliera (barre giornaliere chiuse)
+TIMEFRAME(daily, updateonclose)
+VolBreve = AverageTrueRange[10](close)     // ultime 2 settimane
+VolLunga = AverageTrueRange[100](close)    // ultimi 5 mesi circa
+TIMEFRAME(default)
+
+FattoreMinVol = 0.5
+FattoreMaxVol = 1.5
+
+FattoreM2 = 1
+IF UsaM2 = 1 AND VolBreve > 0 AND VolLunga > 0 THEN
+   FattoreM2 = max(FattoreMinVol, min(FattoreMaxVol, VolLunga / VolBreve))
+ENDIF
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 0    // PER IL TEST (originale: 1)
+InitCapital         = 60000 // PER IL TEST (originale: 6000)
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+
+PsL = PsL * FattoreM2
+PsS = PsS * FattoreM2
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+GRAPH FattoreM2 AS "fattore taglia"

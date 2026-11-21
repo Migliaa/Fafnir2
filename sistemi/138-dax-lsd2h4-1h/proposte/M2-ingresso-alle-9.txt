@@ -1,0 +1,177 @@
+//-------------------------------------------------------------------------
+// 138 DAX LSD2H4 1H  |  MODULO M2
+// Lo short entra alle 09:00 invece che alle 04:00 (variante: esce alle 17:00)
+//
+// Ipotesi. Lo short decide alle 04:00 e tiene la posizione per 17 ore, fino alle 21:00
+// del martedì. Nelle prime cinque ore c'è l'apertura dei mercati europei: sui futures USA
+// l'ora 08:00-09:00 italiana è stata la più rialzista della giornata dal 1998 al 2020,
+// soprattutto dopo le giornate di vendite (Boyarchenko, Larsen, Whelan 2023), e sul DAX
+// 2015-2026 la stessa ora è risultata positiva per i long di 165 DAX (M11). Uno short la
+// tiene contro. In più entra con lo spread IG notturno (5 punti) invece che con quello di
+// Xetra (1,6). Il segnale resta quello delle 04:00: cambia solo l'ora d'ingresso
+// (fonti/prodotti/dax.md, ipotesi H11 e H12).
+// Direzione attesa: entrando alle 09:00 il guadagno medio sale, già nel backtest, e in
+// reale si risparmiano altri 1,7 punti a trade (metà della differenza di spread). Se
+// invece scende, il pattern notturno coglie un calo che prosegue fino all'apertura e il
+// vantaggio dello short sta nelle prime ore.
+//
+// Varianti (OraIngressoS, OraUscitaS):
+//   090000, 210000   ingresso all'apertura di Xetra (proposta)
+//   040000, 170000   ingresso come l'originale, uscita alle 17:00 con lo spread a 1,6
+//                    punti invece di 3,8: misura quanto rende la sera
+// Con il riferimento le due varianti dicono quanto valgono il tratto 04:00-09:00 e il
+// tratto 17:00-21:00 sugli stessi trade.
+// Come provarlo: UsaM2 = 1 nelle due varianti e UsaM2 = 0 (riferimento comune a M1, M2,
+// M3), report short.
+// Come giudicarlo: stessi trade del riferimento, quindi guadagno medio, drawdown,
+// profitto / drawdown. La differenza di profitto divisa per il numero di trade è quanto
+// rende a trade il tratto tolto.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (Germany 40 Cash da 1 €)
+//
+// 1. SOLDI: CapitaleVersato = soldi messi nel sistema; ProfittiPrecedenti = guadagni
+//    delle esecuzioni precedenti, da riportare a mano a ogni riavvio.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 10000    // PER IL TEST (capitale del backtest 10.000 €)
+ProfittiPrecedenti  = 0
+// 2. RISCHIO PER TRADE: % del capitale persa se scatta lo stop
+RischioLong         = 15       // PER IL TEST: 1.500 € con lo stop al 5%
+RischioShort        = 9        // PER IL TEST: 900 € con lo stop al 3%
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso in euro, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST: stesso rischio in euro per ogni trade
+// 4. LIMITI
+MinContratti        = 1
+MaxContratti        = 80
+//
+// PER IL TEST: ogni short rischia 900 € allo stop del 3%, cioè una posizione da 30.000 €
+// in ogni trade: 3 contratti con il DAX a 10.000, 1,1 a 27.000. Ogni anno pesa allo
+// stesso modo e il minimo di 1 contratto non scatta mai. L'originale invece entra quasi
+// sempre con 1 contratto, quindi i suoi euro non sono confrontabili con questi.
+//=========================================================================
+
+// --- Parametri M2
+UsaM2          = 1             // 0 = originale, 1 = modulo attivo
+OraIngressoS   = 090000        // ora della barra che fa partire l'ordine (originale 040000)
+OraUscitaS     = 210000        // ora della barra che fa uscire (originale 210000)
+
+// --- Parametri della strategia (come l'originale)
+EntraLong      = 0
+EntraShort     = 1
+Escludi2022    = 1             // 1 = come l'originale: niente trade ad aprile e luglio 2022
+
+MySLL          = 5             // stop long, % del prezzo
+MySLS          = 3             // stop short
+MyTPL          = 1.5           // target long
+MyTPS          = 3             // target short
+SLbrkevenPL    = 1.1           // guadagno % oltre il quale lo stop del long va all'ingresso
+SLbrkevenPS    = 2.5           // idem per lo short
+TPbrkevenPL    = 2.5           // perdita % oltre la quale il target del long va all'ingresso
+TPbrkevenPS    = 2.5           // idem per lo short
+
+// --- Posizioni (dalla console)
+StopL = MySLL / 100
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioEuroL = max(0, CapitaleBase) * RischioLong / 100
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+
+PsL = max(MinContratti, min(MaxContratti, RischioEuroL / (close * StopL)))
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))
+
+// --- Segnali (come l'originale)
+Time2Trade = 1
+IF Escludi2022 = 1 AND (month = 4 OR month = 7) AND year = 2022 THEN
+   Time2Trade = 0
+ENDIF
+
+multiplierS = 0.3
+bptns08     = low < open[1] - multiplierS * (high[1] - low[1])
+MyTriggerS  = bptns08
+
+MyPtnMRL    = DayOfWeek = 2 AND time = 040000
+MyPtnMRS    = DayOfWeek = 2 AND time = 040000
+
+range1d     = DHigh(1) - DLow(1)
+body1d      = abs(DOpen(1) - DClose(1))
+uptn008     = body1d > 0.5 * range1d
+uptn141     = (close[1] < open[1] AND close[2] > open[2])
+MyPtnUNMRSY = uptn141
+MyPtnUNMRSN = uptn008
+
+SegnaleS = EntraShort AND MyTriggerS AND MyPtnMRS AND MyPtnUNMRSY AND NOT MyPtnUNMRSN
+
+// --- M2: il segnale delle 04:00 resta valido fino all'ora d'ingresso dello stesso martedì
+ONCE SegnaleMemo = 0
+IF DayOfWeek <> 2 THEN
+   SegnaleMemo = 0
+ENDIF
+IF MyPtnMRS THEN
+   SegnaleMemo = SegnaleS
+ENDIF
+
+IngressoS = SegnaleS
+OraFineS  = 210000
+IF UsaM2 = 1 THEN
+   IngressoS = SegnaleMemo AND DayOfWeek = 2 AND time = OraIngressoS AND NOT OnMarket
+   OraFineS  = OraUscitaS
+ENDIF
+
+// --- Ingressi
+IF Time2Trade THEN
+   IF EntraLong AND MyPtnMRL THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+
+   IF IngressoS THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Stop e target spostati all'ingresso (come l'originale)
+IF LongOnMarket AND SLbrkevenPL > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= SLbrkevenPL THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND SLbrkevenPS > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= SLbrkevenPS THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF LongOnMarket AND TPbrkevenPL > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= TPbrkevenPL THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND TPbrkevenPS > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= TPbrkevenPS THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+
+// --- Uscite: martedì alle 21:00 (originale) o all'ora di M2
+ETimeL = (barindex - tradeindex > 17) OR time = 210000
+ETimeS = (barindex - tradeindex > 17) OR time = OraFineS
+
+IF LongOnMarket AND (ETimeL OR DayOfWeek <> 2) THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND (ETimeS OR DayOfWeek <> 2) THEN
+   EXITSHORT AT MARKET
+ENDIF

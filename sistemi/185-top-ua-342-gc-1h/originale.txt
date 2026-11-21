@@ -1,0 +1,203 @@
+//-------------------------------------------------------------------------
+// Codice fornito da Andrea il 2026-11-20 (oro, timeframe 1 ora).
+// NON MODIFICARE: è il riferimento per tutti i confronti.
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 185 TOP_UA_342_GC_1H
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 185 TOP_UA_342_GC_1H
+//-------------------------------------------------------------------------
+//-----------------------------------------------------------------
+// 185_TOP_UA_342_GC_1H - V2 - STOP LOSS DINAMICO
+//-----------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//==//==//==//==//==//==//==//==//==// START - PARAMETRI DI BASE
+EntraLong       = 1
+EntraShort      = 1
+
+BuyLot          = 1 //1 acquista Lotti, altrimenti acquista sempre 1 contratto
+TagliaPosizione = 1
+
+//==//==//==//==//==//==//==//==//==// END - PARAMETRI DI BASE
+
+//==//==//==//==//==//==//==//==//==// START - Gestione dinamica SL / TP via ATR
+
+UseDinamicSLTP=1   // 1 = Usa valori di stop loss e take profit dinamici impostati sulla volatilità
+
+// -- valori % SL e TP Fissi
+MySLL   = 2        // SL fisso LONG
+MySLS   = 2        // SL fisso SHORT
+MyTPL   = 5.2      // TP fisso LONG
+MyTPS   = 7.5      // TP fisso SHORT
+
+// -- moltiplicatori SL e TP Dinamici
+SLmultL = 3        // stop per posizioni LONG
+SLmultS = 3        // stop per posizioni SHORT
+TPmultL = 13       // take-profit LONG
+TPmultS = 0       // take-profit SHORT
+
+// -- parametri comuni -----------------------------------------------------
+If UseDinamicSLTP then
+ATRperiod = 20     // periodo ATR //Su barra 1H, ok 20 period (20 ore)
+ATRpts = AverageTrueRange[ATRperiod](close)
+
+// ---------- STOP LOSS ----------------------------------------------------
+MySLL = (SLmultL * ATRpts) / close * 100    // %
+MySLS = (SLmultS * ATRpts) / close * 100
+// ---------- TAKE PROFIT --------------------------------------------------
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+endif
+
+//Print MyTPS as "MyTPS"
+
+//==//==//==//==//==//==//==//==//==// END - Gestione dinamica SL / TP via ATR
+
+//==//==//==//==//==//==//==//==//==// START - REINVEST
+
+SProfit         = Strategyprofit + 200
+Reinvest        = 1     //Reinvest = 1 ; No Reinvest = 0
+InitCapital     = 4000  //Suggested Capital to start 2500
+RiskOnCapital   = 4   //Suggested %Factor to start buy 1 contract 1.5
+MaxPosition     = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+If MySLL>0 then
+PsL=((InitCapital+SProfit)*(RiskOnCapital/100))/(close*(MySLL/100))
+else
+PsL=0
+endif
+
+If MySLS>0 then
+PsS=((InitCapital+SProfit)*(RiskOnCapital/100))/(close*(MySLS/100))
+else
+PsS=0
+endif
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 0.5 then
+PsL = 0.5
+endif
+
+If PsS < 0.5 then
+PsS = 0.5
+endif
+
+//==//==//==//==//==//==//==//==//==// END - REINVEST
+
+MyStartTrade     = 110000
+MyEndTrade       = 220000
+MaxDayInTradeL   = 4
+MaxDayInTradeS   = 4
+MaxEntriesPerDay = 1
+PortATRpiu       = 2.5
+PortATRMeno      = 5.5
+Once DayInTrade  = 0
+
+IF Year = 2011 THEN
+IF Month >= 6 AND Month <= 11 THEN
+Time2Trade = 0
+ELSE
+Time2Trade = 1
+ENDIF
+ELSE
+Time2Trade = 1
+ENDIF
+
+IF Time2Trade THEN
+
+MyTriggerL = close > DOpen(0) + PortATRpiu  * AverageTrueRange[200](close)
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[200](close)
+
+ptnl25 = high[0] > (high[1] + high[1] * 0.5 * 0.01)
+ptns25 = low [0] < (low [1] - low [1] * 0.5 * 0.01)
+
+MyPtnMRL = ptnl25
+MyPtnMRS = ptns25
+
+uptn104 = Dlow(0) > (Dlow(1) + Dlow(1) * 0.01)
+MyPtnUNMRLY = 1
+MyPtnUNMRLN = uptn104
+
+uptn139 = (Dclose(1) < Dopen(1) AND Dclose(2) > Dopen(2))
+MyPtnUNMRSY = 1
+MyPtnUNMRSN = uptn139
+
+IF time >= MyStartTrade AND time <= MyEndTrade THEN
+
+// --- LONG
+IF EntraLong AND MyTriggerL AND MyPtnMRL AND MyPtnUNMRLY AND NOT MyPtnUNMRLN THEN
+IF BuyLot THEN
+BUY PsL LOT AT MARKET
+ELSE
+BUY TagliaPosizione CONTRACT AT MARKET
+ENDIF
+if MySLL>0 then
+set stop %loss MySLL
+endif
+
+if MyTPL>0 then
+set target %profit MyTPL
+endif
+ENDIF
+
+// --- SHORT
+IF EntraShort AND MyTriggerS AND MyPtnMRS AND MyPtnUNMRSY AND NOT MyPtnUNMRSN THEN
+IF BuyLot THEN
+SELLSHORT PsS LOT AT MARKET
+ELSE
+SELLSHORT TagliaPosizione CONTRACT AT MARKET
+ENDIF
+if MySLS>0 then
+set stop %loss MySLS
+endif
+
+if MyTPS>0 then
+set target %profit MyTPS
+endif
+ENDIF
+ENDIF
+ENDIF
+
+
+// ---- gestione uscite -----------------------------------------
+IF OnMarket <> OnMarket[1] THEN
+DayInTrade = 0
+ENDIF
+
+IF OnMarket AND Day > Day[1] THEN
+DayInTrade = DayInTrade + 1
+ENDIF
+
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL THEN
+SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS THEN
+EXITSHORT AT MARKET
+ENDIF
+
+IF LongOnMarket THEN
+EL0 = barindex - tradeindex > 106 OR (barindex - tradeindex > 80 AND PositionPerf(0) < 0)
+IF EL0 THEN
+SELL AT MARKET
+ENDIF
+ENDIF
+
+IF ShortOnMarket THEN
+ES0 = barindex - tradeindex > 60
+IF ES0 THEN
+EXITSHORT AT MARKET
+ENDIF
+ENDIF

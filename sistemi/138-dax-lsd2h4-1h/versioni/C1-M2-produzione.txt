@@ -1,0 +1,121 @@
+//-------------------------------------------------------------------------
+// Codice principale : 138 DAX short  |  C1 = originale + M2  (candidato definitivo, 2026-11-21)
+// Grafico: Germany 40 Cash (1 €), 1 ora, orari italiani. Nessuna riga GRAPH.
+//
+// Short del martedì: il segnale si decide alle 04:00 come nell'originale (pattern
+// notturno e lunedì non direzionale), ma l'ordine parte alle 09:00, all'apertura di
+// Xetra; uscita alle 21:00. Nel backtest 2016-2026 a posizione fissa da 30.000 €:
+// 71 trade, 102,65 € a trade, profit factor 3,14, drawdown −811 € (originale: 56,07 €,
+// 2,64, −580 €).
+// Differenze dall'originale: ingresso alle 09:00 (M2); tolti il long, le variabili mai
+// usate e l'esclusione di aprile e luglio 2022, che in reale non ha effetto. Per questo
+// il backtest di questo file può differire di uno o due trade da quello di M2.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (Germany 40 Cash da 1 €)
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA
+//    Primo avvio: CapitaleVersato = euro messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 3000
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop (3% del prezzo)
+RischioShort        = 25       // %
+
+// 3. MANOPOLA DEL REINVESTIMENTO: quanta parte dei profitti entra nel calcolo del rischio
+//    0 = niente reinvestimento: il rischio in euro resta fisso, calcolato sul versato
+//    1 = normale: la % si calcola su tutto il capitale di oggi (versato + profitti)
+//    2 = aggressivo: ogni euro di profitto conta il doppio
+//    Le perdite contano sempre per intero.
+Aggressivita        = 1
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 1        // minimo usato da Andrea; verificare in piattaforma se IG accetta 0,5
+MaxContratti        = 80
+//
+// QUANTO RISCHI AL PROSSIMO INGRESSO
+//    capitale        = CapitaleVersato + Aggressivita × profitti (con profitti negativi
+//                      conta il totale)
+//    rischio in euro = capitale × RischioShort / 100
+//    contratti       = rischio in euro / (prezzo × 0,03)
+//    Se i contratti risultano meno di 1, entra con 1 e rischia prezzo × 0,03 euro.
+// Oggi: 3.000 € e DAX circa 26.700. Il 25% è 750 €, cioè 0,94 contratti: entra con 1
+// contratto (posizione da 26.700 €) e uno stop costerebbe circa 800 €, il 27%. Il minimo
+// smette di decidere quando il capitale supera circa 3.200 €.
+// Nel backtest lo stop non è mai scattato: la perdita peggiore è stata l'1% della
+// posizione (circa 270 € a 1 contratto) e il drawdown il 2,7% (circa 720 € a 1
+// contratto, il 24% di 3.000). Con 71 trade il drawdown futuro può essere anche il doppio.
+//=========================================================================
+
+// --- Parametri della strategia
+EntraShort     = 1
+OraSegnaleS    = 040000        // barra su cui si misura il segnale (come l'originale)
+OraIngressoS   = 090000        // M2: ordine all'apertura di Xetra (originale 040000)
+OraUscitaS     = 210000
+
+MySLS          = 3             // stop, % del prezzo
+MyTPS          = 3             // target
+SLbrkevenPS    = 2.5           // guadagno % oltre il quale lo stop va all'ingresso
+TPbrkevenPS    = 2.5           // perdita % oltre la quale il target va all'ingresso
+
+// --- Posizione (dalla console)
+StopS = MySLS / 100
+
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))
+
+// --- Segnale delle 04:00 del martedì
+GiornoOk  = DayOfWeek = 2
+
+bptns08   = low < open[1] - 0.3 * (high[1] - low[1])
+range1d   = DHigh(1) - DLow(1)
+body1d    = abs(DOpen(1) - DClose(1))
+uptn008   = body1d > 0.5 * range1d
+uptn141   = (close[1] < open[1] AND close[2] > open[2])
+
+ONCE SegnaleMemo = 0
+IF Date <> Date[1] THEN
+   SegnaleMemo = 0
+ENDIF
+IF GiornoOk AND time = OraSegnaleS THEN
+   SegnaleMemo = bptns08 AND uptn141 AND NOT uptn008
+ENDIF
+
+// --- Ingresso alle 09:00
+ONCE GiornoTrade = 0
+IF EntraShort AND SegnaleMemo AND GiornoOk AND time = OraIngressoS AND NOT OnMarket THEN
+   SELLSHORT PsS LOTS AT MARKET
+   SET STOP %LOSS MySLS
+   SET TARGET %PROFIT MyTPS
+   GiornoTrade = Date
+ENDIF
+
+// --- Stop e target spostati all'ingresso
+IF ShortOnMarket AND SLbrkevenPS > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= SLbrkevenPS THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND TPbrkevenPS > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= TPbrkevenPS THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+
+// --- Uscita alle 21:00, o al primo cambio di giorno se manca quella barra
+ETimeS = (barindex - tradeindex > 17) OR time = OraUscitaS
+IF ShortOnMarket AND (ETimeS OR Date <> GiornoTrade) THEN
+   EXITSHORT AT MARKET
+ENDIF

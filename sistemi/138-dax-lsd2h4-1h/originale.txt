@@ -1,0 +1,220 @@
+//-------------------------------------------------------------------------
+// Codice principale : 138 DAX short
+//-------------------------------------------------------------------------
+//-------------------------------------------------------------------------
+// Codice principale : 138 DAX LSD2H4 1H
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False // Acumulación de posiciones desactivada
+
+//==//==//==//==//==//==//==//==//==// START - PARAMETRI DI BASE
+EntraLong       = 0 //il long non mi piace, mi sembra overfittato, preferisco investire direttamente sul dax che sul long di questo algo
+EntraShort      = 1
+
+BuyLot          = 1  //1 acquista Lotti, altrimenti acquista sempre 1 contratto
+TagliaPosizione = 1
+
+//==//==//==//==//==//==//==//==//==// END - PARAMETRI DI BASE
+
+//==//==//==//==//==//==//==//==//==// START - Perc guadagno prima di spostare stop a breakeven
+SLbrkevenPL = 1.1  // % Percentuale di guadagno prima di spostare lo stop a breakeven su posizioni long
+SLbrkevenPS = 2.5  // % Percentuale di guadagno prima di spostare lo stop a breakeven su posizioni short
+
+TPbrkevenPL = 2.5 // % Percentuale di guadagno prima di spostare lo stop a breakeven su posizioni long
+TPbrkevenPS = 2.5  // % da ottimizzare
+
+//==//==//==//==//==//==//==//==//==// END - Perc guadagno prima di spostare stop a breakeven
+
+//==//==//==//==//==//==//==//==//==// START - Gestione dinamica SL / TP via ATR
+UseDinamicSLTP=0   // 1 = Usa valori di stop loss e take profit dinamici impostati sulla volatilità
+
+// -- valori % SL e TP Fissi
+MySLL   = 5   // SL fisso LONG
+MySLS   = 3   // SL fisso SHORT
+MyTPL   = 1.5 // TP fisso LONG
+MyTPS   = 3   // TP fisso SHORT
+
+// -- moltiplicatori SL e TP Dinamici
+SLmultL = 0   // 5       // stop per posizioni LONG
+SLmultS = 5   // 7 stop per posizioni SHORT
+TPmultL = 0   // 7     // take-profit LONG
+TPmultS = 6   // 4  // take-profit SHORT
+
+// -- parametri comuni -----------------------------------------------------
+If UseDinamicSLTP then
+ATRperiod = 30     // periodo ATR //Su barra 1H, ok 20 period (20 ore)
+ATRpts = AverageTrueRange[ATRperiod](close)
+
+// ---------- STOP LOSS ----------------------------------------------------
+MySLL = (SLmultL * ATRpts) / close * 100    // %
+MySLS = (SLmultS * ATRpts) / close * 100
+// ---------- TAKE PROFIT --------------------------------------------------
+MyTPL = (TPmultL * ATRpts) / close * 100
+MyTPS = (TPmultS * ATRpts) / close * 100
+endif
+
+//Print MyTPS as "MyTPS"
+
+//==//==//==//==//==//==//==//==//==// END - Gestione dinamica SL / TP via ATR
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START INVESTMENT
+SProfit             = Strategyprofit
+Reinvest            = 0      //Reinvest = 1 ; No Reinvest = 0
+
+FxRate              = 1       //Tasso di cambio EUR/Valuta del prodotto
+ContractValue       = 1       //Valore del contratto mini
+InitCapital         = 3000    //Suggested Capital to start
+ProductPrice        = close
+RiskOnCapital       = 14       //% di rischio sul capitale iniziale
+RiskOnProfitFactor  = 2       //Moltiplicatore di rischio sui profitti
+MaxPosition         = 80      //Max contract (no more than 10 contract)
+GrowthFactor        = 1       //Fattore moltiplicativo per accelerare la crescita
+
+// Calcolo profitti separati dal capitale iniziale
+If Reinvest=0 then
+SProfit =0
+endif
+
+// Calcolo del rischio totale: capitale iniziale e profitti
+RiskCapitalBase     = (InitCapital * (RiskOnCapital / 100))          // Rischio sul capitale iniziale
+RiskProfit          = (SProfit * (RiskOnCapital / 100) * RiskOnProfitFactor) // Rischio aggiuntivo sui profitti
+
+// Capitale totale da rischiare
+TotalRiskCapital    = RiskCapitalBase + RiskProfit
+
+// Calcolo dello stoploss in EUR
+StopLossEURLong  = ProductPrice * (MySLL / 100) * (ContractValue / FxRate)
+StopLossEURShort = ProductPrice * (MySLS / 100) * (ContractValue / FxRate)
+
+// Calcolo del numero di contratti
+PsL = (TotalRiskCapital / StopLossEURLong) * GrowthFactor
+PsS = (TotalRiskCapital / StopLossEURShort) * GrowthFactor
+
+// Limitazioni sul numero di contratti
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// END INVESTMENT
+
+Time2Trade=1
+If (month=4 OR month=7) AND year=2022 then
+Time2Trade=0
+endif
+
+multiplierL=0.3
+multiplierS=0.3
+bptnl08 = high > open[1] + multiplierL *(high[1]-low[1])
+bptns08 = low  < open[1] - multiplierS *(high[1]-low[1])
+
+MyTriggerL=1//bptnl08
+MyTriggerS=bptns08
+
+MyPtnMRL=DayOfWeek=2 AND time=040000
+MyPtnMRS= (DayOfWeek=2 AND time=40000)
+
+
+range1d = DHigh(1)-DLow(1)
+body1d  = abs(DOpen(1)-DClose(1))
+
+uptn137 = (high[1]<high[2] or low[1]>low[2])
+uptn003 = body1d < 0.1 * range1d
+MyPtnUNMRLY = 1//uptn137
+MyPtnUNMRLN = 0//uptn003
+
+uptn008 = body1d > 0.5 * range1d
+uptn141 = (close[1] < open[1] and  close[2] > open[2])
+MyPtnUNMRSY = uptn141
+MyPtnUNMRSN = uptn008
+
+if Time2Trade then
+
+if EntraLong AND MyTriggerL AND MyPtnMRL AND MyPtnUNMRLY AND not MyPtnUNMRLN then
+If BuyLot then
+buy PsL Lot at Market
+else
+buy Tagliaposizione contract at Market
+endif
+
+if MySLL > 0 then
+SET STOP %LOSS MySLL
+endif
+
+if MyTPL>0 then
+SET TARGET %PROFIT MyTPL
+endif
+endif
+
+if EntraShort AND MyTriggerS AND MyPtnMRS AND MyPtnUNMRSY AND not MyPtnUNMRSN then
+If BuyLot then
+sellshort PsS Lot at Market
+else
+sellshort Tagliaposizione contract at Market
+endif
+
+if MySLS > 0 then
+SET STOP %LOSS MySLS
+endif
+
+if MyTPS>0 then
+SET TARGET %PROFIT MyTPS
+endif
+endif
+endif
+
+if longonmarket AND SLbrkevenPL>0 then
+profitPerc = (high - tradeprice) / tradeprice * 100
+if profitPerc >= SLbrkevenPL then
+set stop breakeven
+endif
+endif
+
+if shortonmarket AND SLbrkevenPS>0 then
+profitPerc = (tradeprice - low) / tradeprice * 100
+if profitPerc >= SLbrkevenPS then
+set stop breakeven
+endif
+endif
+
+if longonmarket AND TPbrkevenPL>0 then
+lossPerc = (tradeprice - low) / tradeprice * 100
+if lossPerc >= TPbrkevenPL then
+set target breakeven
+endif
+endif
+
+if shortonmarket AND TPbrkevenPS>0 then
+lossPerc = (high - tradeprice) / tradeprice * 100
+if lossPerc >= TPbrkevenPS then
+set target breakeven
+endif
+endif
+
+ExitL=barindex-tradeindex>17
+ExitS=barindex-tradeindex>17
+
+ETimeL=ExitL OR time=210000
+ETimeS=ExitS OR time=210000
+
+ExitL=DayOfWeek<>2
+ExitS=DayOfWeek<>2
+
+if LongOnMarket and (ETimeL OR ExitL) then
+sell at market
+endif
+
+if ShortOnMarket and (ETimeS OR ExitS) then
+exitshort at market
+endif

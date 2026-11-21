@@ -1,0 +1,149 @@
+//-------------------------------------------------------------------------
+// 138 DAX LSD2H4 1H  |  C0 = originale con la console di gestione
+// Grafico: Germany 40 Cash (1 €), 1 ora, orari italiani.
+//
+// Con i valori qui sotto (CapitaleVersato 3000, RischioShort 14, Aggressivita 0,
+// MinContratti 1) le posizioni sono 420 € / (prezzo × 3%), con minimo 1 e massimo 80:
+// le stesse dell'originale con Reinvest = 0. Unica differenza: con Aggressivita = 0 la
+// console riduce il rischio se il profitto totale è negativo, l'originale no. Finché il
+// sistema è in guadagno il backtest deve dare gli stessi numeri.
+// Altre differenze, nessuna con effetto sui trade: tolte le variabili mai usate (BuyLot,
+// TagliaPosizione, stop e target legati all'ATR, pattern del long spenti); l'esclusione
+// di aprile e luglio 2022 è un interruttore (Escludi2022).
+// È la base delle versioni combinate. Capitale, rischi e manopola per il reale si
+// decidono a fine sistema.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (Germany 40 Cash da 1 €)
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA
+//    Primo avvio: CapitaleVersato = euro messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 3000
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop
+RischioLong         = 14       // % (stop del long al 5%)
+RischioShort        = 14       // % (stop dello short al 3%)
+
+// 3. MANOPOLA DEL REINVESTIMENTO: quanta parte dei profitti entra nel calcolo del rischio
+//    0 = niente reinvestimento, 1 = normale, 2 = ogni euro di profitto conta il doppio.
+//    Le perdite contano sempre per intero.
+Aggressivita        = 0
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 1        // il codice di Andrea usa 1; la taglia minima IG va letta in piattaforma
+MaxContratti        = 80
+//
+// QUANTO RISCHI AL PROSSIMO INGRESSO
+//    rischio in euro = capitale × RischioShort / 100
+//    contratti       = rischio in euro / (prezzo × 0,03)
+//    Se i contratti risultano meno di 1, entra con 1 e rischia prezzo × 0,03 euro.
+// Con 3.000 € e il 14% il rischio scritto è 420 €, ma con il DAX sopra 14.000 la formula
+// dà meno di 1 contratto: oggi (DAX circa 26.700) lo short entra con 1 contratto e uno
+// stop costa circa 800 €, il 27% di 3.000.
+//=========================================================================
+
+// --- Parametri della strategia
+EntraLong      = 0             // il long dell'originale, spento da Andrea
+EntraShort     = 1
+Escludi2022    = 1             // 1 = come l'originale: niente trade ad aprile e luglio 2022
+
+MySLL          = 5             // stop long, % del prezzo
+MySLS          = 3             // stop short
+MyTPL          = 1.5           // target long
+MyTPS          = 3             // target short
+SLbrkevenPL    = 1.1           // guadagno % oltre il quale lo stop del long va all'ingresso
+SLbrkevenPS    = 2.5           // idem per lo short
+TPbrkevenPL    = 2.5           // perdita % oltre la quale il target del long va all'ingresso
+TPbrkevenPS    = 2.5           // idem per lo short
+
+// --- Posizioni (dalla console)
+StopL = MySLL / 100
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioEuroL = max(0, CapitaleBase) * RischioLong / 100
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+
+PsL = max(MinContratti, min(MaxContratti, RischioEuroL / (close * StopL)))
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))
+
+// --- Segnali
+Time2Trade = 1
+IF Escludi2022 = 1 AND (month = 4 OR month = 7) AND year = 2022 THEN
+   Time2Trade = 0
+ENDIF
+
+multiplierS = 0.3
+bptns08     = low < open[1] - multiplierS * (high[1] - low[1])
+MyTriggerS  = bptns08
+
+MyPtnMRL    = DayOfWeek = 2 AND time = 040000
+MyPtnMRS    = DayOfWeek = 2 AND time = 040000
+
+range1d     = DHigh(1) - DLow(1)
+body1d      = abs(DOpen(1) - DClose(1))
+uptn008     = body1d > 0.5 * range1d
+uptn141     = (close[1] < open[1] AND close[2] > open[2])
+MyPtnUNMRSY = uptn141
+MyPtnUNMRSN = uptn008
+
+// --- Ingressi
+IF Time2Trade THEN
+   IF EntraLong AND MyPtnMRL THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+
+   IF EntraShort AND MyTriggerS AND MyPtnMRS AND MyPtnUNMRSY AND NOT MyPtnUNMRSN THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Stop e target spostati all'ingresso
+IF LongOnMarket AND SLbrkevenPL > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= SLbrkevenPL THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND SLbrkevenPS > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= SLbrkevenPS THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF LongOnMarket AND TPbrkevenPL > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= TPbrkevenPL THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND TPbrkevenPS > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= TPbrkevenPS THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+
+// --- Uscite: martedì alle 21:00
+ETime = (barindex - tradeindex > 17) OR time = 210000
+
+IF LongOnMarket AND (ETime OR DayOfWeek <> 2) THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND (ETime OR DayOfWeek <> 2) THEN
+   EXITSHORT AT MARKET
+ENDIF

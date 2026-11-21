@@ -1,0 +1,167 @@
+//-------------------------------------------------------------------------
+// 128 BIAS USDCHF 1H  |  M3, tentativo 3: LA TUA LOGICA, ANCHE NEGLI ALTRI GIORNI
+// Grafico: USD/CHF Mini (10.000 USD, 1 franco per pip), 1 ORA, orari italiani.
+//
+// Con UsaM3 = 0 è il tuo originale senza reinvestimento, riga per riga: stessi
+// ingressi, stessi pattern, stessi mesi, stesso stop e target, stessa taglia
+// (1 contratto, 0,9 / prezzo sotto 0,90). Deve dare il tuo report: 159 trade,
+// 26,72 franchi a trade, drawdown -438.
+//
+// L'idea. M1 ha mostrato che il mercoledì senza filtri guadagna 5,47 franchi a trade
+// su 637 trade, mentre i tuoi 159 mercoledì filtrati ne guadagnano 26,72: il
+// vantaggio sta nei due pattern (oggi il prezzo non è già sceso molto dall'apertura,
+// le ultime cinque ore non hanno una direzione netta) e nei mesi, non nel giorno.
+// Se è così, la stessa selezione alle 13:00 degli altri giorni dovrebbe guadagnare
+// in modo simile, e il sistema farebbe tre-quattro volte i trade.
+// Con UsaM3 = 1 cambia solo il giorno dell'ingresso; tutto il resto è il tuo codice,
+// uscite comprese: dopo 51 barre o il venerdì alle 17:00, quello che viene prima.
+// Lunedì -> mercoledì 17:00, martedì -> giovedì 17:00, giovedì -> venerdì 17:00.
+//
+// Direzione attesa, dichiarata prima del test:
+// - se il vantaggio viene dai pattern, lunedì, martedì e giovedì guadagnano vicino ai
+//   26 franchi a trade;
+// - se viene dal fine settimana (domanda di franchi prima della chiusura, come lo short
+//   giovedì-venerdì che guadagna su AUD/JPY e GBP/JPY), il giovedì regge e lunedì e
+//   martedì no;
+// - se lunedì, martedì e giovedì perdono tutti, i pattern sono stati trovati sul
+//   mercoledì per caso, e il tuo sistema è sovra-adattato.
+//
+// RIFERIMENTO: lo stesso file con UsaM3 = 0, oppure il tuo originale con Reinvest = 0
+// (sono uguali).
+//
+// COME PROVARLO (report short)
+// Ottimizzazione di GiornoS da 1 a 4, passo 1, con UsaM3 = 1 (4 lanci):
+//   1 lunedì, 2 martedì, 3 mercoledì (= il tuo originale), 4 giovedì.
+// Mandami la tabella dell'ottimizzazione e il report dei giorni che guadagnano.
+// Poi, solo se due o più giorni guadagnano: GiornoS = 0 mette insieme tutti i giorni
+// da lunedì a giovedì. Una posizione aperta blocca gli ingressi dei giorni dopo
+// finché non esce (per esempio lo short del lunedì, che dura fino al mercoledì alle
+// 17:00, toglie quello del mercoledì).
+//
+// COME GIUDICARLO
+// - Giorno per giorno: guadagno medio a trade (sopra i 6 franchi di spread e
+//   finanziamento, che il backtest non vede), profit factor, profitto / drawdown.
+// - Insieme: profitto / drawdown contro 9,7 dell'originale e profitto totale.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in franchi, la valuta di StrategyProfit su USD/CHF
+// 1. SOLDI: CapitaleVersato = soldi messi nel sistema; ProfittiPrecedenti = guadagni
+//    delle esecuzioni precedenti, da riportare a mano a ogni riavvio.
+CapitaleVersato     = 6000     // PER IL TEST: come InitCapital dell'originale
+ProfittiPrecedenti  = 0
+// 2. RISCHIO PER TRADE: % del capitale persa se scatta lo stop
+RischioLong         = 1.5
+RischioShort        = 1.5      // 90 franchi = 6.000 x 1% x GrowthFactor 1,5 dell'originale
+// 3. REINVESTIMENTO: 0 = rischio fisso, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST
+// 4. LIMITI
+MinContratti        = 1        // come l'originale
+MaxContratti        = 80
+ValorePerPunto      = 10000    // franchi per 1,00 di prezzo, 1 contratto mini (10.000 USD)
+//=========================================================================
+
+// --- Interruttori
+UsaM3   = 1                    // 0 = il tuo originale
+GiornoS = 3                    // con UsaM3 = 1: 1 lun, 2 mar, 3 mer, 4 gio, 0 tutti (lun-gio)
+
+EntraLong  = 0
+EntraShort = 1
+
+MySLL = 3.5
+MySLS = 1
+MyTPL = 4
+MyTPS = 3.5
+
+// --- Taglia (con questi valori uguale all'originale senza reinvestimento)
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+PsL = max(MinContratti, min(MaxContratti, max(0, CapitaleBase) * RischioLong / 100 / (close * MySLL / 100 * ValorePerPunto)))
+PsS = max(MinContratti, min(MaxContratti, max(0, CapitaleBase) * RischioShort / 100 / (close * MySLS / 100 * ValorePerPunto)))
+
+// --- Da qui il tuo codice; cambia solo il giorno di TriggerS
+StartTrade = 010000
+EndTrade   = 220000
+
+TriggerL= DayOfWeek=5 AND Time=170000 and month <>7
+
+IF UsaM3 = 0 THEN
+   GiornoOK = DayOfWeek = 3
+ELSIF GiornoS = 0 THEN
+   GiornoOK = DayOfWeek >= 1 AND DayOfWeek <= 4
+ELSE
+   GiornoOK = DayOfWeek = GiornoS
+ENDIF
+TriggerS = GiornoOK AND Time=130000 and month <>8 and month <>2
+
+// giorni attorno ai due interventi della BNS (il 15/1/2015 serve per il giovedì)
+If (Day=2 AND month=9 and year=2011) OR ((day=14 OR day=15) AND month=1 AND year=2015) then
+   TriggerL=0
+   TriggerS=0
+endif
+
+uptn104 = (Dlow(0)>Dlow(1)+Dlow(1))
+uptn119 = 0
+if TriggerL then
+   PtnMRLY   = 1
+   PtnMRLN   = 0
+   PtnUNMRLY = uptn104
+   PtnUNMRLN = uptn119
+endif
+
+uptn020 = abs(Open[5]-Close[1]) > 0.7 * (high[5]-low[1])
+uptn042 = Dopen(0)-Dlow(0)<(Dopen(1)-Dlow(1))*1.5
+if TriggerS then
+   PtnMRSY   = 1
+   PtnMRSN   = 0
+   PtnUNMRSY = uptn042
+   PtnUNMRSN = uptn020
+endif
+
+if time >= StartTrade and time <= EndTrade then
+   if EntraLong AND TriggerL then
+      If (PtnMRLY AND not PtnMRLN) AND (PtnUNMRLY AND not PtnUNMRLN) then
+         buy PsL Lots at Market
+         if MySLL>0 then
+            set stop %loss MySLL
+         endif
+         if MyTPL>0 then
+            set target %profit MyTPL
+         endif
+      endif
+   endif
+
+   if EntraShort AND TriggerS then
+      If (PtnMRSY AND not PtnMRSN) AND (PtnUNMRSY AND not PtnUNMRSN) then
+         sellshort PsS Lots at Market
+         if MySLS>0 then
+            set stop %loss MySLS
+         endif
+         if MyTPS>0 then
+            set target %profit MyTPS
+         endif
+      endif
+   endif
+endif
+
+// --- Uscite: identiche all'originale
+ExitL =LongOnMarket  AND DayOfWeek=3 AND (Time=130000 OR barindex-tradeindex>69)
+ExitS =ShortOnMarket AND DayOfWeek=5 AND (Time=170000 OR barindex-tradeindex>51)
+
+If longonmarket and barindex-tradeindex>69 then
+   sell at market
+endif
+If shortonmarket and barindex-tradeindex>51 then
+   exitshort at market
+endif
+If ExitL then
+   sell at market
+endif
+If ExitS then
+   exitshort at market
+endif

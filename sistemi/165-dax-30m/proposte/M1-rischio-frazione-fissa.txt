@@ -1,0 +1,148 @@
+//-------------------------------------------------------------------------
+// 165 DAX 30m  |  MODULO M1
+// Rischio a frazione fissa del capitale attuale
+//
+// Ipotesi. Nell'originale lo stop del long costa il 5% del capitale iniziale più il
+// 12% dei profitti (short: 4% più 12%). Man mano che i profitti crescono, la quota
+// del capitale attuale messa a rischio sale dal 5% verso il 12%: il sistema diventa
+// più aggressivo quanto più è cresciuto, e il drawdown in percentuale tende a salire
+// nel tempo. Con un vantaggio stabile, la crescita migliore a parità di rischio si
+// ottiene rischiando sempre la stessa frazione del capitale (criterio di Kelly e sue
+// frazioni, MacLean-Thorp-Ziemba 2010). Qui lo stop costa sempre FrazioneL / FrazioneS
+// per cento del capitale attuale = InitCapital + profitti (compresi i 1.600 €
+// riportati a mano, come nell'originale).
+// È il modulo reinvestimento-frazione-fissa validato su 128 BIAS HOUR (M6), dove però
+// correggeva un errore di formula; qui la formula funziona e la domanda è un'altra:
+// rischio costante contro rischio crescente.
+// UsaM1 = 0 riproduce esattamente l'originale.
+//
+// Varianti (stessa proporzione tra long e short dell'originale):
+//   FrazioneL 5   / FrazioneS 4   stesso rischio iniziale dell'originale
+//   FrazioneL 7.5 / FrazioneS 6
+//   FrazioneL 10  / FrazioneS 8
+// Come provarlo: impostazioni dell'originale (Reinvest = 1), sistema completo.
+// Come giudicarlo: capitale finale e drawdown massimo in percentuale (riga GRAPH
+// "drawdown %"), non in euro, perché con il reinvestimento il drawdown in euro cresce
+// per forza. M1 è migliore se una variante arriva allo stesso drawdown percentuale
+// massimo dell'originale con più capitale finale, o allo stesso capitale con meno
+// drawdown. Con la variante 5/4 ci si aspetta meno capitale finale e meno drawdown.
+// La riga "rischio long % capitale" mostra quanto costa davvero lo stop: con il DAX
+// sopra 20.000 punti e poco capitale, il minimo di 1 contratto la porta oltre la
+// frazione scelta, e lì M1 e originale coincidono.
+//
+// Ipotesi sul contratto: 1 lotto = 1 € per punto (Germany 40 Cash da 1 €).
+// Le righe GRAPH in fondo servono solo nel backtest: toglile prima del reale.
+//-------------------------------------------------------------------------
+defparam cumulateorders= false
+
+UsaM1 = 1                 // 0 = originale, 1 = modulo attivo
+
+EntraLong=1
+EntraShort=1
+
+TagliaPosizione=1
+
+MySLL=3
+MyTPL=3.5
+MySLS=2.5
+MyTPS=1.4
+
+// --- Parametri M1: % del capitale attuale persa se scatta lo stop
+FrazioneL = 5
+FrazioneS = 4
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==// START - Strategy Param
+SProfit             = Strategyprofit +900+550+150
+Reinvest            = 1    //Reinvest = 1 ; No Reinvest = 0
+InitCapital         = 6000  //Suggested Capital to start
+RiskOnCapital       = 4 //Suggested %Factor to start buy 1 contract
+RiskOnCapitalL      = 5
+RiskOnProfit        = 12
+MaxPosition         = 80    //Max contract (no more than 10 contract)
+
+If Reinvest=0 then
+SProfit=0
+endif
+
+CapitaleAttuale = InitCapital + SProfit
+
+IF UsaM1 = 1 THEN
+   PsL = CapitaleAttuale * (FrazioneL / 100) / (close * (MySLL / 100))
+   PsS = CapitaleAttuale * (FrazioneS / 100) / (close * (MySLS / 100))
+ELSE
+   PsL=((InitCapital)*(RiskOnCapitalL/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLL/100))
+   PsS=((InitCapital)*(RiskOnCapital/100) + (SProfit)*(RiskOnProfit/100))/(close*(MySLS/100))
+ENDIF
+
+If PsL > MaxPosition then
+PsL = MaxPosition
+endif
+
+If PsS > MaxPosition then
+PsS = MaxPosition
+endif
+
+If PsL < 1 then
+PsL = 1
+endif
+
+If PsS < 1 then
+PsS = 1
+endif
+
+//==//==//==//==//==//==//==//==//==//==//==//==//==//==//==//
+
+time2tradeL = time = 133000 and dayofweek <>5
+time2tradeS = time = 123000 and dayofweek<>1
+TriggerL = close > exponentialaverage [25] (close)
+TriggerS = close < exponentialaverage [25] (close)
+
+PatternL=rsi[2](Close)>65
+PatternS=not (dlow(1)>dlow(5))
+
+if EntraLong AND time2tradeL AND TriggerL AND PatternL then
+buy PsL Lots at market
+endif
+
+if EntraShort AND time2tradeS AND TriggerS AND PatternS then
+sellshort PsS Lots at market
+endif
+
+ES1=0
+
+ExitL=(time=080000 ) or(dayofweek = 5 and time = 210000)
+ExitS=ES1 OR Barindex-tradeindex>12
+
+If LongOnMarket AND ExitL then
+sell at market
+endif
+
+If ShortOnMarket AND ExitS then
+exitshort at market
+endif
+If LongOnMarket AND MySLL>0 then
+set stop %loss MySLL
+endif
+
+If ShortOnMarket AND MySLS>0 then
+set stop %loss MySLS
+endif
+
+If LongOnMarket AND MyTPL>0 then
+set target %profit MyTPL
+endif
+
+If ShortOnMarket AND MyTPS>0 then
+set target %profit MyTPS
+endif
+
+// --- Solo backtest: controllo del modulo (togli prima del reale)
+// Il drawdown è calcolato sui soli trade chiusi.
+ONCE PiccoCapitale = 0
+PiccoCapitale = max(PiccoCapitale, CapitaleAttuale)
+DDPercento = 100 * (CapitaleAttuale / PiccoCapitale - 1)
+RischioL = PsL * close * MySLL / 100
+RischioS = PsS * close * MySLS / 100
+GRAPH 100 * RischioL / CapitaleAttuale AS "rischio long % capitale"
+GRAPH 100 * RischioS / CapitaleAttuale AS "rischio short % capitale"
+GRAPH DDPercento AS "drawdown %"

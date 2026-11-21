@@ -1,0 +1,270 @@
+//-------------------------------------------------------------------------
+// Codice principale : 3251_ORAF_FDAX_5M_1400-1635-S  |  C0 (2026-11-21)
+// = originale con la console di gestione a rischio per trade al posto del money
+//   management (sezioni 3 e 5) e senza il freno sul drawdown.
+// Ingressi, filtri, stop, pareggio e uscita sono quelli dell'originale.
+// Grafico: CFD DAX Futures (Eurex) di IG, 5 minuti, ora italiana.
+// Controllo: con i valori della console qui sotto fa sempre 1 contratto e deve dare gli
+// stessi trade e gli stessi punti dell'originale lanciato con Reinvest = 0 e
+// ContrattiFissi = 1.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (contratto da 1 euro a punto)
+//
+// 1. SOLDI DESTINATI AL SISTEMA
+//    Primo avvio: CapitaleVersato = euro messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha gia' guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perche' ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 10000
+ProfittiPrecedenti  = 0
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop (167 punti)
+RischioShort        = 2.5      // %
+
+// 3. MANOPOLA DEL REINVESTIMENTO: quanta parte dei profitti entra nel calcolo del rischio
+//    0 = niente reinvestimento: il rischio in euro resta fisso, calcolato sul versato
+//    1 = normale: la % si calcola su versato + profitti
+//    2 = aggressivo: ogni euro di profitto conta il doppio
+//    valori intermedi vanno bene (0.5, 1.5...). Le perdite contano sempre per intero.
+Aggressivita        = 0        // 0 nei test: ogni trade rischia gli stessi euro
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5
+MaxContratti        = 80
+Passo               = 0.5      // contratti arrotondati per difetto a multipli di 0,5, come nell'originale
+ValorePunto         = 1        // euro per punto con 1 contratto
+//
+// QUANTO RISCHI AL PROSSIMO INGRESSO
+//    capitale        = CapitaleVersato + Aggressivita x (ProfittiPrecedenti + profitti
+//                      di questa esecuzione); con profitti negativi conta il totale
+//    rischio in euro = capitale x RischioShort / 100
+//    contratti       = rischio in euro / 167 punti, arrotondati per difetto a 0,5
+//    Per l'arrotondamento il rischio vero e' un po' piu' basso di quello scritto: con
+//    10.000 euro e il 2,5% (250 euro) i contratti sono 1,497, quindi 1, e uno stop
+//    costa 167 euro (1,7%).
+//=========================================================================
+
+//==//==//==//==//==//==//==// 1. PARAMETRI DI BASE
+EntraShort = 1          // 1 = apre posizioni short, 0 = no
+
+//==//==//==//==//==//==//==// 2. PARAMETRI DEL SISTEMA (orari di Francoforte: uguali all'ora italiana)
+// giorni: martedi', giovedi' e venerdi' (riga giornoOk nella sezione 6)
+OraIngresso = 1400      // a mercato, all'apertura della prima barra da qui (Francoforte)
+OraUscita = 1635        // a mercato, all'apertura della prima barra da qui (Francoforte)
+
+//==//==//==//==//==//==//==// 4. STOP E TARGET (in punti o in % dell'ingresso)
+StopPunti = 167      // stop loss in punti (0 = no)
+StopPerc = 0       // stop loss in % dell'ingresso (0 = no)
+TargetPunti = 0    // take profit in punti (0 = no)
+TargetPerc = 0     // take profit in % (0 = no)
+TrailingPerc = 0  // trailing stop in % dell'ingresso, dal miglior prezzo (0 = no)
+PareggioPerc = 0.31  // stop a pareggio dopo un guadagno in % (0 = no)
+
+// ordini di stop e target per la barra dopo, ricalcolati a ogni chiusura
+IF OnMarket THEN
+IF LongOnMarket THEN
+lato = 1
+ELSE
+lato = -1
+ENDIF
+ingresso = PositionPrice
+IF BarIndex = TradeIndex(1) THEN
+migliore = ingresso                  // il miglior prezzo parte dall'ingresso
+ELSIF lato = 1 THEN
+migliore = max(migliore, High)
+ELSE
+migliore = min(migliore, Low)
+ENDIF
+mioStop = 0
+IF (StopPunti > 0) OR (StopPerc > 0) THEN
+mioStop = ingresso - lato * (StopPunti + StopPerc / 100 * ingresso)
+ENDIF
+IF TrailingPerc > 0 THEN
+trail = migliore - lato * TrailingPerc / 100 * ingresso
+IF (mioStop = 0) OR (lato * (trail - mioStop) > 0) THEN
+mioStop = trail
+ENDIF
+ENDIF
+IF (PareggioPerc > 0) AND (lato * (migliore - ingresso) >= PareggioPerc / 100 * ingresso) AND ((mioStop = 0) OR (lato * (ingresso - mioStop) > 0)) THEN
+mioStop = ingresso
+ENDIF
+mioTarget = 0
+IF (TargetPunti > 0) OR (TargetPerc > 0) THEN
+mioTarget = ingresso + lato * (TargetPunti + TargetPerc / 100 * ingresso)
+ENDIF
+IF lato = 1 THEN
+IF mioStop > 0 THEN
+SELL AT mioStop STOP
+ENDIF
+IF mioTarget > 0 THEN
+SELL AT mioTarget LIMIT
+ENDIF
+ELSE
+IF mioStop > 0 THEN
+EXITSHORT AT mioStop STOP
+ENDIF
+IF mioTarget > 0 THEN
+EXITSHORT AT mioTarget LIMIT
+ENDIF
+ENDIF
+ENDIF
+
+distS = StopPunti + StopPerc / 100 * Close     // distanza dello stop in punti, per la taglia
+
+//==//==//==//==//==//==//==// 5. TAGLIA (dalla console, ricalcolata a ogni barra con l'utile gia' chiuso)
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+TagliaS = floor(RischioEuroS / (distS * ValorePunto) / Passo) * Passo
+TagliaS = max(MinContratti, min(MaxContratti, TagliaS))
+
+//==//==//==//==//==//==//==// 6. FILTRI E LIVELLI
+// ==== ORA DI FRANCOFORTE: il motore ragiona li', il grafico e' in ora italiana
+// Francoforte e l'Italia hanno lo stesso fuso e la stessa ora legale: nessuna conversione
+differenza = 0
+minChi = Hour * 60 + Minute - differenza     // chiusura della barra, minuti dalla mezzanotte di Francoforte
+giornoChi = DayOfWeek                        // giorno della settimana a Francoforte (0 = domenica)
+IF minChi < 0 THEN
+minChi = minChi + 1440
+giornoChi = giornoChi - 1
+IF giornoChi < 0 THEN
+giornoChi = 6
+ENDIF
+ENDIF
+oraChi = floor(minChi / 60) * 100 + (minChi MOD 60)
+fineSessione = (minChi = 1050)             // ultima barra della sessione RTH
+inSessione = (((minChi - 5 - 540 + 1440) MOD 1440) < 510)    // barre della sessione RTH
+// sul CFD ci sono barre anche fuori dalla sessione: la sessione nuova comincia dalla prima barra dentro, e la barra
+// che chiude all'apertura decide gli ingressi della prima barra (2026-11-06: il 2220 si fermava dopo 3 trade)
+ONCE fuoriSessione = 0
+IF NOT inSessione THEN
+fuoriSessione = 1
+ENDIF
+// una pausa che contiene l'apertura (es. festivi USA: chiusura alle 12 e riapertura alle 17) apre una sessione nuova
+// anche se la barra prima non era l'ultima per orario (lezione 2026-11-09: sessioni festive fuse con la dopo)
+pausa = ((minChi - 5 - minChi[1] + 1440) MOD 1440)
+nuovaSessione = inSessione AND (fineSessione[1] OR (NOT inSessione[1]) OR ((pausa > 0) AND (((540 - minChi[1] + 1440) MOD 1440) <= pausa)))
+preApertura = ((NOT inSessione) AND (minChi = 540))
+// barre della sessione contate: le uscite «dopo N barre» contano solo queste, come il motore (lezione 2026-11-09,
+// 2515 FDAX: contando anche le ore di notte del CFD si usciva dopo 24 ore invece che dopo 24 barre del future)
+ONCE barreSess = 0
+IF inSessione THEN
+barreSess = barreSess + 1
+ENDIF
+IF OnMarket AND (BarIndex = TradeIndex(1)) THEN
+barraInS = barreSess
+ENDIF
+
+// ==== CANDELE E FILTRI (pattern della libreria, stesse regole del motore)
+IF inSessione THEN
+// ---- candele giornaliere: GO0, GH0, GL0 la candela in corso; $GO[k] ... $GC[k] le chiuse
+ONCE GNuova = 1
+ONCE GN = 0
+ONCE GBarre = 0
+ONCE GRotta = -1000
+ONCE GIntera = 1
+GSessRotta = nuovaSessione AND (GBarre < 81.6)      // la sessione appena finita era a meta'
+IF nuovaSessione THEN
+GBarre = 0
+ENDIF
+GBarre = GBarre + 1
+IF GSessRotta THEN
+IF GNuova THEN                       // era nella candela chiusa alla barra prima
+GRotta = GN
+ELSE
+GIntera = 0
+ENDIF
+ENDIF
+GSalto = (nuovaSessione) AND NOT GNuova        // la candela prima non si e' chiusa: si chiude ora
+IF GSalto THEN
+$GO[1] = GO0
+$GH[1] = GH0
+$GL[1] = GL0
+$GC[1] = Close[1]
+GN = GN + 1
+IF NOT GIntera THEN
+GRotta = GN
+ENDIF
+GNuova = 1
+ENDIF
+IF GNuova THEN
+GO0 = Open
+GH0 = High
+GL0 = Low
+GIntera = 1
+ELSE
+GH0 = max(GH0, High)
+GL0 = min(GL0, Low)
+ENDIF
+GFine = (minChi = 1050)
+IF GFine THEN                          // la candela e' chiusa: diventa la numero 1
+$GO[1] = GO0
+$GH[1] = GH0
+$GL[1] = GL0
+$GC[1] = Close
+GN = GN + 1
+IF (NOT GIntera) OR (GBarre < 81.6) THEN
+GRotta = GN
+ENDIF
+ENDIF
+GNuova = GFine
+
+// Filtro 1: P06 no (giornaliero) - il prezzo non e' sotto il minimo della seduta di ieri
+filtro1S = ((GN >= 1) AND (GN - GRotta >= 1) AND NOT GFine AND NOT (Close < $GL[1]))
+// Filtro 2: P60 si' (giornaliero) - il prezzo e' piu' dello 0,5% sotto il massimo della seduta
+filtro2S = NOT GFine AND (GH0 - Close > 0.005 * GH0)
+ENDIF
+
+// ==== SOLO LE BARRE DELLA SESSIONE RTH (0900-1730 di Francoforte)
+IF inSessione OR preApertura THEN
+IF preApertura THEN                          // la barra dopo apre la sessione di oggi (CFD con barre fuori sessione)
+prossimaOra = 0900
+prossimoGiorno = giornoChi
+ELSIF fineSessione AND fuoriSessione THEN    // la barra dopo e' fuori sessione: si decide alla barra prima dell'apertura
+prossimaOra = -1
+prossimoGiorno = -1
+ELSIF fineSessione THEN                      // la barra dopo apre la sessione di domani (lunedi' dopo il venerdi')
+prossimaOra = 0900
+IF giornoChi = 5 THEN
+prossimoGiorno = 1
+ELSE
+prossimoGiorno = giornoChi + 1
+ENDIF
+ELSE
+prossimaOra = oraChi
+prossimoGiorno = giornoChi
+ENDIF
+giornoOk = ((prossimoGiorno = 2)OR (prossimoGiorno = 4) OR (prossimoGiorno = 5))
+//==//==//==//==//==//==//==// 7. USCITE
+// ==== USCITA: all'apertura della prima barra dall'orario di uscita; al piu' tardi all'apertura dell'ultima
+IF OnMarket AND ((prossimaOra >= OraUscita) OR (minChi = 1045)) THEN
+IF LongOnMarket THEN
+SELL AT MARKET
+ELSE
+EXITSHORT AT MARKET
+ENDIF
+ENDIF
+
+//==//==//==//==//==//==//==// 8. INGRESSI
+// ==== INGRESSO: una volta al giorno, all'apertura della prima barra dall'orario d'ingresso
+ONCE entrato = 0
+IF fineSessione THEN
+entrato = 0                              // domani e' un altro giorno
+ENDIF
+IF (entrato = 0) AND (prossimaOra >= OraIngresso) AND (prossimaOra < OraUscita) THEN
+entrato = 1                              // se il filtro dice no, quel giorno non si entra piu'
+IF giornoOk AND filtro1S AND filtro2S THEN
+IF EntraShort THEN
+SELLSHORT TagliaS CONTRACTS AT MARKET
+ENDIF
+ENDIF
+ENDIF
+ENDIF

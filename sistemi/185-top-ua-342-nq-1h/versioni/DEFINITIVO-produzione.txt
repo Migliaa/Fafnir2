@@ -1,0 +1,143 @@
+//-------------------------------------------------------------------------
+// Codice principale : 185 TOP UA 342 NQ 1H  |  VERSIONE DI PRODUZIONE  (2026-11-21)
+// = originale (logica invariata) con la console di gestione a rischio per trade.
+// Grafico: US Tech 100 Cash (1 €), 1 ora, orari italiani. Nessuna riga GRAPH.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (US Tech 100 Cash da 1 €)
+//
+// 1. SOLDI SUL CONTO DESTINATI AL SISTEMA
+//    Primo avvio: CapitaleVersato = euro messi nel sistema, ProfittiPrecedenti = 0.
+//    Riavvio: ProfittiPrecedenti = quanto il sistema ha già guadagnato (o perso, col
+//    meno) nelle esecuzioni precedenti, perché ProRealTime riparte da zero.
+//    Prelievo o versamento: cambia CapitaleVersato, non i profitti.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 4200
+ProfittiPrecedenti  = 3000
+
+// 2. RISCHIO PER TRADE: % del capitale che si perde se scatta lo stop (4% del prezzo)
+RischioLong         = 6        // %
+RischioShort        = 10       // %
+
+// 3. MANOPOLA DEL REINVESTIMENTO: quanta parte dei profitti entra nel calcolo del rischio
+//    0   = niente reinvestimento: il rischio in euro resta fisso, calcolato sul versato
+//    1   = normale: la % si calcola su tutto il capitale di oggi (versato + profitti)
+//    2   = aggressivo: ogni euro di profitto conta il doppio
+//    valori intermedi vanno bene (0.5, 1.5...). Le perdite contano sempre per intero,
+//    quindi dopo un calo il rischio si riduce qualunque sia la manopola.
+//    Con la manopola sopra 1 il rischio vero supera la % scritta sopra man mano che i
+//    profitti crescono: con 2 e profitti pari al versato, il 6% diventa il 9%.
+Aggressivita        = 1
+
+// 4. LIMITI DELLA POSIZIONE
+MinContratti        = 0.5      // taglia minima IG: sotto questa il trade entra comunque con 0,5
+MaxContratti        = 80
+//
+// QUANTO RISCHI AL PROSSIMO INGRESSO
+//    capitale        = CapitaleVersato + Aggressivita × (ProfittiPrecedenti + profitti
+//                      di questa esecuzione); con profitti negativi conta il totale
+//    rischio in euro = capitale × RischioLong / 100          (short: RischioShort)
+//    contratti       = rischio in euro / (prezzo × 0,04)
+//    Se i contratti risultano meno di 0,5, entra con 0,5 e rischia
+//    0,5 × prezzo × 0,04 euro (circa 500 € con l'indice a 25.000).
+// Oggi: capitale 7.200 €, indice circa 25.200. Long: 6% = 432 €, cioè 0,43 contratti,
+// quindi entra con 0,5 e rischia circa 504 € (7%). Short: 10% = 720 €, 0,71 contratti.
+// Il long esce dal minimo quando il capitale supera circa 8.400 €.
+//
+// Riferimento dal backtest 2016-2026: con 6% sul long e 10% sullo short (stessa leva di
+// M8) il capitale è passato da 5.000 a 213.000 €. Lo short rischia di più perché ha
+// avuto un drawdown più piccolo a parità di posizione: così i due lati pesano uguale.
+//=========================================================================
+
+// --- Parametri della strategia
+EntraLong     = 1
+EntraShort    = 1
+
+MySLL         = 4          // stop long, % del prezzo
+MySLS         = 4          // stop short
+MyTPL         = 2.5        // target long
+MyTPS         = 1.6        // target short
+
+MyStartTradeL = 080000
+MyEndTradeL   = 200000
+MyStartTradeS = 160000
+MyEndTradeS   = 200000
+PortATRMeno   = 4          // calo minimo dall'apertura della giornata, in escursioni medie orarie
+BarreUscitaL  = 90
+BarreUscitaS  = 100
+MaxDayInTradeL = 8          // giorni in posizione (contati come nell'originale)
+MaxDayInTradeS = 4
+ONCE DayInTrade = 0
+
+// --- Posizioni (dalla console)
+StopL = MySLL / 100
+StopS = MySLS / 100
+
+CapitaleAttuale = CapitaleVersato + ProfittiPrecedenti + StrategyProfit
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+
+RischioEuroL = max(0, CapitaleBase) * RischioLong / 100
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+
+PsL = max(MinContratti, min(MaxContratti, RischioEuroL / (close * StopL)))
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))
+
+// --- Segnali
+GiornoLong = dayofweek = 1
+
+shortAvg  = Average[5](close)
+shortAvg2 = Average[10](close)
+iptn18    = shortAvg crosses over shortAvg2 and close > (shortAvg * 0.99)
+
+uptn116    = (dhigh(1) - dclose(1)) < 0.20 * (dhigh(1) - dlow(1))
+MyTriggerS = close < DOpen(0) - PortATRMeno * AverageTrueRange[20](close)
+
+// --- Ingressi
+IF time >= MyStartTradeL AND time <= MyEndTradeL THEN
+   IF EntraLong AND iptn18 AND GiornoLong THEN
+      BUY PsL LOTS AT MARKET
+      SET STOP %LOSS MySLL
+      SET TARGET %PROFIT MyTPL
+   ENDIF
+ENDIF
+
+IF time >= MyStartTradeS AND time <= MyEndTradeS THEN
+   IF EntraShort AND MyTriggerS AND uptn116 THEN
+      SELLSHORT PsS LOTS AT MARKET
+      SET STOP %LOSS MySLS
+      SET TARGET %PROFIT MyTPS
+   ENDIF
+ENDIF
+
+// --- Uscite
+// giorni in posizione, come l'originale: il contatore riparte solo quando si passa da
+// fuori a dentro il mercato, quindi uno short che inverte un long eredita i giorni del long
+IF OnMarket <> OnMarket[1] THEN
+   DayInTrade = 0
+ENDIF
+IF OnMarket AND (Day > Day[1] OR (DayInTrade > 3 AND DayOfWeek < 1)) THEN
+   DayInTrade = DayInTrade + 1
+ENDIF
+IF LongOnMarket AND DayInTrade >= MaxDayInTradeL AND MaxDayInTradeL > 0 THEN
+   SELL AT MARKET
+ENDIF
+IF ShortOnMarket AND DayInTrade >= MaxDayInTradeS AND MaxDayInTradeS > 0 THEN
+   EXITSHORT AT MARKET
+ENDIF
+
+FineSettimana = dayofweek = 5 AND time = 210000
+
+IF LongOnMarket AND (barindex - tradeindex > BarreUscitaL OR FineSettimana) THEN
+   SELL AT MARKET
+ENDIF
+
+IF ShortOnMarket AND (barindex - tradeindex > BarreUscitaS OR FineSettimana) THEN
+   EXITSHORT AT MARKET
+ENDIF

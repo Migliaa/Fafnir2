@@ -1,0 +1,131 @@
+//-------------------------------------------------------------------------
+// 138 DAX LSD2H4 1H  |  MODULO M5, sopra C1 (originale + ingresso alle 09:00)
+// Lo stesso segnale in tutti i giorni della settimana, non solo il martedì
+//
+// Ipotesi. M1 ha mostrato che il vantaggio sta nel pattern notturno: senza, il martedì
+// non rende niente (−4 € a trade). Il martedì invece non ha una ragione documentata: sul
+// DAX non ci sono prove di un martedì negativo e l'effetto lunedì è sparito dal 2000
+// (Miss et al. 2020). Se il pattern coglie davvero una pressione in vendita nella notte
+// che riprende dopo l'apertura di Xetra, deve funzionare anche negli altri giorni, e i
+// trade passano da circa 7 a circa 35 l'anno. Se funziona solo il martedì, il martedì è
+// stato scelto sul backtest insieme al pattern e anche C1 va preso con più cautela.
+// Direzione attesa: gli altri giorni positivi, ma meno del martedì, che è stato
+// selezionato sugli stessi dati. Gli short aggiunti devono rendere almeno 20-30 € a
+// trade per coprire lo spread reale (2,7 punti a contratto tra 09:00 e 21:00).
+// Il filtro sul giorno prima resta: il lunedì guarda la candela del venerdì.
+//
+// Come provarlo, in un'unica ottimizzazione: GiornoS da 0 a 5 con passo 1, report short.
+//   0     da lunedì a venerdì (proposta)
+//   1..5  un giorno solo (1 = lunedì ... 5 = venerdì); 2 deve dare esattamente C1
+// Riferimento: UsaM5 = 0, cioè C1 a posizione fissa = M2 della prima tornata
+// (71 trade, 102,65 € a trade, 7.288,37 €, drawdown −810,97 €).
+// Come giudicarlo: guadagno medio degli short aggiunti = (profitto con 0 − 7.288,37) /
+// (trade con 0 − 71) e, giorno per giorno, guadagno medio e profitto / drawdown. Aggiunge
+// esposizione, quindi si confronta anche con C1 ingrandito dello stesso guadagno: vale
+// se profitto / drawdown non scende sotto 9,0.
+// Attenzione: con più giorni lo short si sovrappone più spesso a quello di 165 DAX, che
+// entra alle 12:30 da martedì a venerdì.
+//-------------------------------------------------------------------------
+DEFPARAM CumulateOrders = False
+DEFPARAM PreLoadBars = 3000
+
+//=========================================================================
+// CONSOLE DI GESTIONE  -  tutto in euro (Germany 40 Cash da 1 €)
+//
+// 1. SOLDI: CapitaleVersato = soldi messi nel sistema; ProfittiPrecedenti = guadagni
+//    delle esecuzioni precedenti, da riportare a mano a ogni riavvio.
+//    Backtest: CapitaleVersato = capitale del backtest, ProfittiPrecedenti = 0.
+CapitaleVersato     = 10000    // PER IL TEST (capitale del backtest 10.000 €)
+ProfittiPrecedenti  = 0
+// 2. RISCHIO PER TRADE: % del capitale persa se scatta lo stop
+RischioShort        = 9        // PER IL TEST: 900 € con lo stop al 3% = posizione da 30.000 €
+// 3. MANOPOLA DEL REINVESTIMENTO: 0 = rischio fisso in euro, 1 = normale, 2 = profitti doppi
+Aggressivita        = 0        // PER IL TEST: stesso rischio in euro per ogni trade
+// 4. LIMITI
+MinContratti        = 1
+MaxContratti        = 80
+//=========================================================================
+
+// --- Parametri M5
+UsaM5          = 1             // 0 = C1, 1 = modulo attivo
+GiornoS        = 0             // 0 = da lunedì a venerdì; 1..5 = solo quel giorno
+
+// --- Parametri della strategia (C1)
+EntraShort     = 1
+Escludi2022    = 1             // 1 = come l'originale, per riprodurre M2
+OraSegnaleS    = 040000
+OraIngressoS   = 090000
+OraUscitaS     = 210000
+
+MySLS          = 3
+MyTPS          = 3
+SLbrkevenPS    = 2.5
+TPbrkevenPS    = 2.5
+
+// --- Posizione (dalla console)
+StopS = MySLS / 100
+Profitti = ProfittiPrecedenti + StrategyProfit
+IF Profitti > 0 THEN
+   CapitaleBase = CapitaleVersato + Aggressivita * Profitti
+ELSE
+   CapitaleBase = CapitaleVersato + Profitti
+ENDIF
+RischioEuroS = max(0, CapitaleBase) * RischioShort / 100
+PsS = max(MinContratti, min(MaxContratti, RischioEuroS / (close * StopS)))
+
+// --- Giorni (M5)
+GiornoOk = DayOfWeek = 2
+IF UsaM5 = 1 THEN
+   IF GiornoS = 0 THEN
+      GiornoOk = DayOfWeek >= 1 AND DayOfWeek <= 5
+   ELSE
+      GiornoOk = DayOfWeek = GiornoS
+   ENDIF
+ENDIF
+
+// --- Segnale delle 04:00
+Time2Trade = 1
+IF Escludi2022 = 1 AND (month = 4 OR month = 7) AND year = 2022 THEN
+   Time2Trade = 0
+ENDIF
+
+bptns08   = low < open[1] - 0.3 * (high[1] - low[1])
+range1d   = DHigh(1) - DLow(1)
+body1d    = abs(DOpen(1) - DClose(1))
+uptn008   = body1d > 0.5 * range1d
+uptn141   = (close[1] < open[1] AND close[2] > open[2])
+
+ONCE SegnaleMemo = 0
+IF Date <> Date[1] THEN
+   SegnaleMemo = 0
+ENDIF
+IF GiornoOk AND time = OraSegnaleS THEN
+   SegnaleMemo = bptns08 AND uptn141 AND NOT uptn008
+ENDIF
+
+// --- Ingresso alle 09:00
+ONCE GiornoTrade = 0
+IF Time2Trade AND EntraShort AND SegnaleMemo AND GiornoOk AND time = OraIngressoS AND NOT OnMarket THEN
+   SELLSHORT PsS LOTS AT MARKET
+   SET STOP %LOSS MySLS
+   SET TARGET %PROFIT MyTPS
+   GiornoTrade = Date
+ENDIF
+
+// --- Stop e target spostati all'ingresso
+IF ShortOnMarket AND SLbrkevenPS > 0 THEN
+   IF (tradeprice - low) / tradeprice * 100 >= SLbrkevenPS THEN
+      SET STOP BREAKEVEN
+   ENDIF
+ENDIF
+IF ShortOnMarket AND TPbrkevenPS > 0 THEN
+   IF (high - tradeprice) / tradeprice * 100 >= TPbrkevenPS THEN
+      SET TARGET BREAKEVEN
+   ENDIF
+ENDIF
+
+// --- Uscita alle 21:00, o al primo cambio di giorno se manca quella barra
+ETimeS = (barindex - tradeindex > 17) OR time = OraUscitaS
+IF ShortOnMarket AND (ETimeS OR Date <> GiornoTrade) THEN
+   EXITSHORT AT MARKET
+ENDIF
