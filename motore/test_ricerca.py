@@ -120,7 +120,8 @@ def test_lancio_scrive_la_fisarmonica_e_non_si_ripete():
         try:
             spec = {"tipo": "cicli", "nome": "prova-cicli", "ipotesi": "x", "meccanismo": "y", "fonte": "z", "prodotto": "KW", "barre": 60,
                     "forza_bruta": {"orari": {"da": "08:00", "a": "12:00", "passo": 60}, "uscite": USCITE[:2]},
-                    "cicli": {"semi_1": 3, "semi_2": 2, "finali": 2, "margine_semi": 0.0}, "uscite_finali": []}
+                    "cicli": {"semi_1": 3, "semi_2": 2, "finali": 2, "margine_semi": 0.0}, "uscite_finali": [],
+                    "rumore": {"ripetizioni": 2}}
             f = tmp / "c.json"
             f.write_text(json.dumps(spec), encoding="utf-8")
             assert R.controlla(f)["ok"] and R.controlla(f)["prove_forza_bruta"] == 5 * 2 * (1 + len(pattern.dello_strato(1)))

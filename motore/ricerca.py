@@ -38,6 +38,7 @@ PREDEFINITI = {"semi_1": 300, "semi_2": 100, "finali": 12, "correlazione_semi": 
                "quantile_2": 0.95, "quantile_3": 0.99, "candidati_per_seme": 10}
 TRADE_ANNO_MIN, T_MIN, M_MIN = albero.TRADE_ANNO_FOGLIA, albero.T_MIN, albero.M_MIN
 CAMPIONE_EFFETTIVI = 4000
+RUMORE_PREDEFINITO = 50      # giri della prova sul rumore se il file non dice altro (0 la spegne)
 MOTIVI = ["meno di 8 trade l'anno", "guadagno a trade troppo basso anche con un filtro", "guadagno non distinguibile dal caso (t < 2)",
           "perde sugli anni lasciati fuori (CPCV)", "perde in una metà del periodo", "non batte i filtri a caso",
           "non migliora il genitore in 2 terzi su 3", "i trade tolti non vanno peggio", "punteggio non migliore della regola di partenza"]
@@ -388,7 +389,7 @@ def lancia_spec(spec: dict, log=print) -> dict:
         nota("walk-forward", "la ricerca si rifà anno per anno dal 2017 con i soli anni precedenti", prove=g["provate"])
         wf = cic.walkforward()
         rum, p_fin = None, {}
-        n_rum = int((spec.get("rumore") or {}).get("ripetizioni", 0))
+        n_rum = int((spec.get("rumore") or {}).get("ripetizioni", RUMORE_PREDEFINITO))   # parte della pipeline standard
         if n_rum and g["finali"]:
             nota("prova sul rumore", f"la ricerca si rifà {n_rum} volte con le condizioni slegate dai risultati, per vedere quanto "
                                      f"belli escono i finali per caso (solo perché la ricerca vera ha dei finali)", prove=g["provate"])

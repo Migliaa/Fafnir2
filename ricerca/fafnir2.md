@@ -36,7 +36,7 @@ Per rispondere ad Andrea basta leggere `campagna.json` o l'`imbuto` e le `foglie
 ## Regole che valgono sempre
 
 - Soglie di Andrea: 20/30/50 € a trade netti per 1 CFD (fino a 36 ore, 72, oltre), con la volatilità del 2023 ("euro di oggi"); almeno 8 trade l'anno; R² 0,85; 70% di anni positivi.
-- Un sistema da provare su ProRealTime deve passare tutto: anche la ricerca rifatta anno per anno (almeno metà del guadagno in-sample), il DSR, la prova sul rumore (al massimo 5%) e la prova finale.
+- Un sistema da provare su ProRealTime deve passare tutto: anche la ricerca rifatta anno per anno (almeno metà del guadagno in-sample), il DSR, la prova sul rumore (al massimo 5%; 50 giri di default in ogni ricerca) e la prova finale.
 - Una ricerca o campagna già lanciata non si rilancia con lo stesso nome (la prova finale si usa una volta).
 
 ## Risultati finora (2026-11-22)
@@ -59,4 +59,4 @@ Per rispondere ad Andrea basta leggere `campagna.json` o l'`imbuto` e le `foglie
 | meccanismo documentato per ogni gamba | no: la forza bruta non lo chiede; si scrive dopo |
 | short con soglie più severe sui prodotti che salgono | in parte: i due lati si cercano separati |
 
-Prossimi passi proposti, in quest'ordine: (1) griglia **settimanale** (giorno e ora d'ingresso × giorno e ora d'uscita) nel motore a matrice, il modello del 128; (2) famiglia **185**: spostamento dall'apertura di 2-6 escursioni orarie con uscite di 2-5 giorni e stop in escursioni; (3) esclusioni (pattern negati) nella moltiplicazione; (4) i moduli promossi dei sistemi (`moduli/README.md`) come varianti d'uscita e di gestione nella verifica.
+Piano dettagliato della prossima sessione in `ricerca/prossima-sessione.md`. Prossimi passi proposti, in quest'ordine: (1) griglia **settimanale** (giorno e ora d'ingresso × giorno e ora d'uscita) nel motore a matrice, il modello del 128; (2) famiglia **185**: spostamento dall'apertura di 2-6 escursioni orarie con uscite di 2-5 giorni e stop in escursioni; (3) esclusioni (pattern negati) nella moltiplicazione; (4) i moduli promossi dei sistemi (`moduli/README.md`) come varianti d'uscita e di gestione nella verifica.
