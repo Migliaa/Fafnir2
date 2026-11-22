@@ -11,3 +11,11 @@ CACHE = RADICE / "Dati" / "_cache"
 TAGLIO = datetime(2025, 11, 21, tzinfo=timezone.utc)
 
 FUSO = "Europe/Rome"  # tutte le logiche ragionano in ora italiana, come i sistemi ProRealTime
+
+# Periodi della validazione interna (anni interi, ora italiana). La scoperta usa solo SCOPERTA;
+# i due holdout si guardano una volta sola, a selezione finita, e mai dai comandi di esplorazione.
+HOLDOUT_INDIETRO = (None, 2010)
+SCOPERTA = (2011, 2023)
+RECENTE = (2019, 2023)        # controllo di attualità, dentro la scoperta
+HOLDOUT_AVANTI = (2024, 2025)
+RISULTATI = RADICE / "risultati"

@@ -161,7 +161,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 |---|---|---|
 | 1 | `motore/dati`: lettura con il taglio, ora italiana, barre, cross sintetici, cache, test | fatta (2026-11-22) |
 | 2 | schema in-sample/out-of-sample e metriche decisi dalla ricerca | fatta (2026-11-22) |
-| 3 | `catalogo` (orari, costi, gemelli) e `motori/mappa`; taratura su AUDJPY e DAX | |
+| 3 | `catalogo` (orari, costi, gemelli) e `motori/mappa`; taratura su AUDJPY e DAX | fatta (2026-11-22): AUDJPY ritrovato, DAX rimandato alla fase 5 |
 | 4 | `metriche` e `validazione` (delegabile con specifica) | |
 | 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | |
 | 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | |
@@ -173,6 +173,14 @@ Dalla fase 3 ogni modulo nuovo espone già le sue funzioni alla `cli` e scrive i
 
 **Note sui dati emerse nella fase 1**: l'FDAX ha la sessione notturna Eurex dalla fine del 2018 (prima apriva alle 08:00 italiane); i cross contro yen si costruiscono con scala 100 (JY è quotato in dollari per 100 yen).
 
+**Taratura della fase 3** (mappa oraria senza condizioni, 2011-2023, rendimenti in escursioni medie giornaliere al netto degli spread e del finanziamento notturno indicativi del catalogo, che Andrea deve ancora confermare):
+
+- *AUDJPY*, long dal lunedì 03:00 al mercoledì 22:00 (la finestra di 128): +0,062 escursioni per trade al netto, profit factor 1,16 senza stop, 8 anni positivi su 13, +0,13 nel 2019-2023; al lordo dei costi +0,11 (t circa 2,5). Il segno c'è, e le migliori celle long dell'intera mappa sono tutte finestre lunedì-mercoledì, cioè il ciclo settimanale dello yen. Nessuna cella però supera la soglia del caso per 5.800 celle provate (t 4,2): la mappa da sola non avrebbe fatto scoprire 128, che vale perché l'ipotesi viene da un meccanismo dichiarato prima e perché il sistema reale aggiunge lo stop e le esclusioni.
+- *DAX (FDAX)*: le due gambe di 165 senza le loro condizioni non rendono (short 12:30 + 7 ore da martedì a venerdì tra −0,024 e +0,002 escursioni; long 13:30 → 09:00 da lunedì a giovedì tra −0,020 e +0,005). Il loro vantaggio sta nelle condizioni (media esponenziale, RSI, minimo di ieri), quindi la taratura del DAX si fa con la tabella degli eventi nella fase 5, non con la mappa.
+- *Una trappola vista sul DAX*: le celle migliori (long da lunedì e giovedì alle 17:00 tenuti nella sera, t 3,7, tutti gli anni positivi) esistono solo dalla fine del 2018 perché prima la sessione chiudeva alle 22:00, quindi hanno 5-6 anni invece di 13. Il riassunto riporta per questo gli anni di ogni cella; le celle con meno anni non si confrontano con le altre come se fossero ugualmente attendibili.
+
+Comandi: `python -m motore.cli mappa calcola|migliori|cella <prodotto> --barre 60`, `python -m motore.cli catalogo`; test in `motore/test_mappa.py` (dati finti dal risultato noto). La mappa legge solo gli anni della scoperta.
+
 ## Prodotti
 
-Quali prodotti IG quota davvero (alcuni agricoli e il riso, RR, probabilmente no) va segnato nel catalogo: quelli non quotati servono solo come gemelli per le conferme. Il progetto non è sotto git: conviene metterlo, con `Dati/` esclusa, per poter tornare indietro sulle modifiche del software.
+Quali prodotti IG quota davvero (alcuni agricoli e il riso, RR, probabilmente no) va segnato nel catalogo: quelli non quotati servono solo come gemelli per le conferme.
