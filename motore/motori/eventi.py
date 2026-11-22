@@ -39,17 +39,16 @@ def _anni(df: pl.DataFrame, anni=SCOPERTA) -> pl.DataFrame:
 def base(nome: str, minuti: int, anni=None) -> pl.DataFrame:
     """Barre con il contesto giornaliero che serve alle condizioni.
 
-    Senza `anni` sono quelle della scoperta (`config.SCOPERTA`), con il contesto giornaliero calcolato solo su quegli
-    anni. Con `anni = (da, a)` (la prova finale) le barre sono quelle del periodo, ma il contesto giornaliero usa
-    tutta la storia fino alla fine del periodo, per non perdere i primi giorni."""
-    if anni is None:
-        g = _anni(dati.barre(nome, 1440)).sort("apre")
-    else:
-        g = _anni(dati.barre(nome, 1440), (None, anni[1])).sort("apre")
+    Senza `anni` sono quelle della scoperta (`config.SCOPERTA`). Il contesto giornaliero (medie delle escursioni,
+    giorni precedenti) usa tutta la storia fino alla fine del periodo, per non perdere i primi giorni: è il
+    riscaldamento degli indicatori, come in ProRealTime, e non entra nei risultati."""
+    fine = (SCOPERTA if anni is None else anni)[1]
+    g = _anni(dati.barre(nome, 1440), (None, fine)).sort("apre")
     g = g.with_columns(
         pl.col("apre").dt.date().alias("data"),
         pl.col("o").alias("dopen"),
         (pl.col("h") - pl.col("l")).rolling_mean(20).shift(1).alias("esc"),
+        (pl.col("h") - pl.col("l")).rolling_mean(100).shift(1).alias("esc_lunga"),
         *[pl.col(x).shift(k).alias(f"{x}{k}") for x in "ohlc" for k in range(1, 6)],
     ).drop("apre", "chiude", "o", "h", "l", "c", "v", "minuti")
     b = _anni(dati.barre(nome, minuti), SCOPERTA if anni is None else anni).sort("apre").with_columns(
@@ -57,6 +56,10 @@ def base(nome: str, minuti: int, anni=None) -> pl.DataFrame:
     b = b.join(g, on="data", how="left").with_columns(
         pl.col("h").cum_max().over("data").alias("dmax"),
         pl.col("l").cum_min().over("data").alias("dmin"),
+        # apertura della barra delle 15:30 (apertura di Wall Street), nota solo da quella barra in poi
+        pl.when((pl.col("apre").dt.hour() == 15) & (pl.col("apre").dt.minute() == 30)).then(pl.col("o"))
+        .forward_fill().over("data").alias("o1530"),
+        pl.col("data").dt.day().cast(pl.Int32).alias("giorno_mese"),
     )
     return b.with_columns(
         pl.col("chiude").dt.weekday().alias("giorno"),

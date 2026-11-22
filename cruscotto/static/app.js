@@ -153,19 +153,30 @@ function md(src) {
 }
 
 // ------------------------------------------------------------------ curva a tre fasce
-const FASCE = { indietro: ['Holdout all\'indietro', 'var(--f-ind)'], scoperta: ['In-sample', 'var(--f-in)'], avanti: ['Fuori campione', 'var(--f-out)'] };
+const FASCE = { antico: ['Prima del 2011', 'var(--f-ind)', 'Prima'], indietro: ["Holdout all'indietro", 'var(--f-ind)', 'Prima'], vicino: ['2011-2013', 'var(--f-vic)', '11-13'],
+  scoperta: ['In-sample', 'var(--f-in)', 'In'], avanti: ['Fuori campione', 'var(--f-out)', 'Fuori'] };
 const mese = d => { const [a, m] = d.split('-'); return ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'][+m - 1] + ' ' + a; };
 /* Curva netta quasi quadrata (1:1,2) con una fascia di colore per periodo e il drawdown sotto in piccolo.
    c: {date, cum, dd, segmenti: [[periodo, da, a]]}. */
 function curvaQuadrata(c, fmt) {
   const W = 520, H = 440, HD = 96, m = { l: 62, r: 10, t: 10, b: 40 }, n = c.cum.length;
   const X = i => m.l + (W - m.l - m.r) * i / (n - 1);
-  const sc = bellaScala(Math.min(...c.cum, 0), Math.max(...c.cum, 0), 5), Y = v => m.t + (H - m.t - m.b) * (1 - (v - sc.a) / (sc.b - sc.a));
+  const rifv = (c.rif || []).filter(v => v != null);
+  const sc = bellaScala(Math.min(...c.cum, ...rifv, 0), Math.max(...c.cum, ...rifv, 0), 5), Y = v => m.t + (H - m.t - m.b) * (1 - (v - sc.a) / (sc.b - sc.a));
   const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'quadrata', role: 'img', 'aria-label': 'Curva netta cumulata' });
   const assi = sv('g', { class: 'assi' });
   c.segmenti.forEach(([p, i0, i1]) => svg.append(sv('rect', { x: X(i0), y: m.t, width: Math.max(1, X(i1) - X(i0)), height: H - m.t - m.b, style: `fill:${FASCE[p][1]};opacity:.13` })));
+  // anni del walk-forward della procedura: fuori campione della procedura dentro la scoperta
+  (c.anni_wf || []).forEach(a => {
+    const idx = c.date.map((d, i) => d.startsWith(String(a)) ? i : -1).filter(i => i >= 0);
+    if (idx.length) svg.append(sv('rect', { x: X(idx[0]), y: m.t, width: Math.max(1, X(idx[idx.length - 1]) - X(idx[0])), height: 8, style: 'fill:var(--f-wf);opacity:.8' }));
+  });
   sc.t.forEach(v => assi.append(sv('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }), sv('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, fmt(v))));
   svg.append(assi);
+  if (rifv.length) {          // riferimento D2: la stessa finestra in tutti i giorni, sugli stessi trade
+    const pts = []; c.rif.forEach((v, i) => { if (v != null) pts.push(`${X(i)},${Y(v)}`); });
+    svg.append(sv('polyline', { points: pts.join(' '), style: 'fill:none;stroke:var(--muto);stroke-width:1.2;stroke-dasharray:4 3' }));
+  }
   c.segmenti.forEach(([p, i0, i1]) => {
     const j0 = Math.max(0, i0 - 1);          // il tratto parte dal punto precedente, così le fasce si toccano senza buchi
     svg.append(sv('polyline', { points: c.cum.slice(j0, i1 + 1).map((v, k) => `${X(j0 + k)},${Y(v)}`).join(' '), style: `fill:none;stroke:${FASCE[p][1]};stroke-width:1.8` }));
@@ -178,7 +189,7 @@ function curvaQuadrata(c, fmt) {
   area.addEventListener('pointermove', ev => {
     const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) * W / r.width, i = Math.max(0, Math.min(n - 1, Math.round((x - m.l) / (W - m.l - m.r) * (n - 1))));
     riga.setAttribute('x1', X(i)); riga.setAttribute('x2', X(i)); riga.style.display = '';
-    tip.textContent = `${c.date[i]}: ${fmt(c.cum[i])}`; tip.style.display = 'block'; tip.style.left = Math.min(Math.max(8, X(i) * r.width / W + 10), r.width - 150) + 'px'; tip.style.top = '8px';
+    tip.textContent = `${c.date[i]}: ${fmt(c.cum[i])}` + (c.rif && c.rif[i] != null ? ` · riferimento ${fmt(c.rif[i])}` : ''); tip.style.display = 'block'; tip.style.left = Math.min(Math.max(8, X(i) * r.width / W + 10), r.width - 150) + 'px'; tip.style.top = '8px';
   });
   area.addEventListener('pointerleave', () => { riga.style.display = 'none'; tip.style.display = 'none'; });
   svg.append(riga, area);
@@ -539,6 +550,105 @@ async function paginaEsperimento(nome) {
     h('h2', {}, 'Resoconto'), e.resoconto ? h('div', { class: 'pannello' }, md(e.resoconto)) : h('p', { class: 'muto' }, 'Nessun resoconto scritto.'));
 }
 
+// ------------------------------------------------------------------ alberi
+const LIVELLI = { L0: 'Radice', L2: 'Ingresso', L3: 'Uscita' };
+const nE = (x, d = 1) => x == null ? '–' : nf(x, d) + ' €';
+async function paginaAlberi() {
+  const mio = giro;
+  const l = await api('/alberi');
+  vedi(mio, h('h1', {}, 'Alberi'), h('p', { class: 'muto' }, 'Ricerca in profondità: ogni radice viene approfondita con ingressi e uscite, e ogni passo deve battere il caso e il genitore.'),
+    l.length ? h('div', { class: 'tabella-cont' }, h('table', {},
+      h('thead', {}, h('tr', {}, ['Nome', 'Prodotto', 'Prove / budget', 'Radici vive', 'Foglie verificate', 'Candidati', 'Lanciato'].map(t => h('th', {}, t)))),
+      h('tbody', {}, l.map(a => h('tr', { class: 'clic', onclick: () => { location.hash = '#/alberi/' + a.nome; } }, h('td', { class: 'sx' }, a.nome), h('td', {}, `${a.prodotto} ${a.barre} min`),
+        h('td', {}, `${a.prove} / ${a.budget}`), h('td', {}, `${a.radici_vive} su ${a.radici}`), h('td', {}, a.foglie), h('td', { class: a.candidati ? 'pos' : '' }, a.candidati),
+        h('td', {}, a.quando.slice(0, 10))))))) : h('p', { class: 'muto' }, 'Nessun albero lanciato. Comando: python -m motore.albero lancia esperimenti/alberi/<nome>.json'));
+}
+function porteTabella(porte) {
+  return h('table', { class: 'porte' }, h('tbody', {}, porte.map(p => h('tr', {}, h('td', {}, h('span', { class: 'pallino ' + p.esito })), h('td', { class: 'sx' }, p.nome),
+    h('td', {}, typeof p.valore === 'number' ? nf(p.valore, Math.abs(p.valore) >= 10 ? 1 : 3) : (p.valore ?? '–')), h('td', { class: 'sx muto' }, p.soglia)))));
+}
+function rigaNodo(n, prof) {
+  const m = n.misure || {}, d = n.differenziale || {}, aperta = h('tr', { class: 'dettaglio', style: 'display:none' }, h('td', { colspan: 10 },
+    h('div', { class: 'dett-nodo' }, porteTabella(n.porte || []),
+      h('div', { class: 'muto' }, [`Condizioni: ${(n.regola.cond || []).map(c => `${c[0]} ${c[1]} ${c[2]}`).join(' e ') || 'nessuna'}`,
+        ` · uscita ${Object.entries(n.regola.uscita || {}).filter(([, v]) => v != null).map(([k, v]) => `${k} ${v}`).join(', ')}${n.regola.stop ? ` · stop ${n.regola.stop} escursioni` : ''}`,
+        h('br'), `Segnale meno la deriva (D1) ${nf(d.D1, 3)} esc. (t ${nf(d.t_D1, 1)}) · meno la stessa finestra (D2) ${nf(d.D2, 3)} esc. (t ${nf(d.t_D2, 1)}) · `,
+        `migliore del ${d.D3_quantile == null ? '–' : pc(d.D3_quantile)} dei sottoinsiemi casuali della finestra · quanto segue il DAX giorno per giorno ${nf(d.beta, 2)}`,
+        n.filtri_casuali ? [h('br'), `Tiene il ${pc(n.filtri_casuali.quota_tenuta)} dei trade del genitore; batte il ${pc(n.filtri_casuali.quantile)} dei filtri casuali; i trade tolti fanno ${nf(n.filtri_casuali.resto_media, 3)} esc. a trade`] : null,
+        h('br'), `Fuori campione CPCV del nodo: mediana ${nf(n.cpcv && n.cpcv.mediana, 3)} esc. a trade, 10° percentile ${nf(n.cpcv && n.cpcv.p10, 3)}`]))));
+  const riga = h('tr', { class: 'clic ' + (n.esito === 'scartato' ? 'spento' : ''), onclick: () => { aperta.style.display = aperta.style.display ? '' : 'none'; } },
+    h('td', {}, miniGrafico({ y: n.mini })),
+    h('td', { class: 'sx', style: `padding-left:${8 + prof * 22}px` }, prof ? '↳ ' : '', h('strong', {}, n.etichetta), h('div', { class: 'muto' }, LIVELLI[n.livello] || n.livello)),
+    h('td', { class: (m.G || 0) >= 1 ? 'pos' : '' }, nE(m.euro_oggi), h('div', { class: 'muto' }, `G ${nf(m.G, 2)}`)),
+    h('td', {}, nf(m.trade_anno, 0)), h('td', {}, nf(m.t, 1)), h('td', {}, nf(m.r2, 2)), h('td', {}, nE(m.dd_euro_oggi, 0)),
+    h('td', { class: segno(d.D2) }, d.D2_euro == null ? '–' : nE(d.D2_euro), h('div', { class: 'muto' }, d.quota_D2 == null ? '' : `${pc(d.quota_D2)} del lordo`)),
+    h('td', {}, badge(n.esito === 'scartato' ? 'scartato' : 'candidato', n.esito === 'pronto' ? 'pronto' : n.esito === 'scartato' ? 'scartato' : 'passa')),
+    h('td', { class: 'sx muto' }, n.motivo || ''));
+  return [riga, aperta];
+}
+function settimoNumero(f) {
+  const d = f.differenziale || {}, ok = (f.porte || []).filter(p => p.nome.includes('D2') || p.nome.includes('D1'));
+  const es = ok.length ? (ok.every(p => p.esito === 'verde') ? 'verde' : 'rosso') : null;
+  return grande('Segnale isolato', d.D2_euro == null ? '–' : nE(d.D2_euro), `soglia: almeno metà del lordo, t >= 2`, es,
+    d.quota_D2 == null ? '' : `${pc(d.quota_D2)} del lordo · t ${nf(d.t_D2, 1)}`, 'Guadagno a trade meno quello della stessa finestra in tutti i giorni (euro di oggi)');
+}
+function schedaFoglia(a, f) {
+  const m = f.misure_minuto || {}, c = f.curva, pf = f.prova_finale;
+  const dd = []; let pk = -Infinity; c.cum.forEach(v => { pk = Math.max(pk, v, 0); dd.push(v - pk); });
+  const cv = { ...c, dd }, fmt = v => nf(v, 0) + ' €';
+  const porta = nome => (f.porte || []).find(p => p.nome.startsWith(nome));
+  const es = p => p ? p.esito : null;
+  const sinistra = h('div', { class: 'col-curva' }, h('div', { class: 'titolo-fig' }, 'Profitto netto cumulato, 1 CFD IG, in euro di oggi'), curvaQuadrata(cv, fmt), legendaFasce(cv),
+    h('div', { class: 'legenda' }, h('span', {}, h('i', { style: 'background:var(--muto)' }), 'tratteggio: stessa finestra in tutti i giorni (riferimento)'),
+      c.anni_wf && c.anni_wf.length ? h('span', {}, h('i', { style: 'background:var(--f-wf)' }), `barra in alto: anni del walk-forward ${c.anni_wf[0]}-${c.anni_wf[c.anni_wf.length - 1]}`) : null));
+  const destra = h('div', { class: 'col-num' }, h('div', { class: 'sei' },
+    grande('Guadagno medio a trade', nE(m.euro_oggi), `soglia ${m.richiesto} € (trade di ${nf(m.ore_medie, 1)} ore)`, es(porta('Guadagno medio')), `storico ${nE(m.euro_storico)} · 1 CFD IG, netto`, 'Guadagno medio con la volatilità del 2023'),
+    grande('Drawdown massimo', nE(m.dd_euro_oggi, 0), 'nessuna soglia', null, `utile / drawdown ${nf(m.utile_su_dd, 1)}`, 'In euro di oggi'),
+    grande('Lordo / costi', m.costo_euro_oggi ? nf((m.euro_oggi + m.costo_euro_oggi) / m.costo_euro_oggi, 1) : '–', 'riferimento 3', null, `costi ${nE(m.costo_euro_oggi)} a trade`, 'Quante volte il lordo copre spread e notte'),
+    grande('Tempo in mercato', nf(m.ore_medie, 1) + ' ore', 'nessuna soglia', null, 'ore medie per trade', 'Ogni posizione aperta blocca margine'),
+    grande('Regolarità (R²)', nf(m.r2), 'soglia 0,85', es(porta('Regolarità')), `anni positivi ${pc(m.anni_positivi)}`, 'Quanto la curva somiglia a una retta'),
+    grande('Trade l\'anno', nf(m.trade_anno, 0), `soglia 6 e t >= 2 (t ${nf(m.t, 1)})`, es(porta('Trade l')), `${m.n} trade in ${a.anni[1] - a.anni[0] + 1} anni`, 'Numero medio di trade in un anno'),
+    settimoNumero(f)),
+    h('div', { class: 'fuori' }, h('strong', {}, 'Fuori campione 2024-2025: '), pf && pf.avanti ? [`${pf.avanti.n} trade · utile `, h('span', { class: segno(pf.avanti.utile) }, eur(pf.avanti.utile)),
+      ` · ${nf(pf.avanti.guadagno_medio, 1)} € a trade`] : 'non eseguito: la foglia non ha passato le porte della scoperta.'),
+    h('div', { class: 'fuori' }, h('strong', {}, 'Walk-forward della procedura: '), `${f.walkforward.n} trade, ${nf(f.walkforward.media_esc, 3)} esc. a trade, efficienza ${nf(f.efficienza_wf, 2)} (soglia 0,5)`));
+  return h('div', { class: 'foglia' }, h('h3', {}, f.etichetta, ' ', badge(f.esito), h('span', { class: 'muto' }, ' ' + f.motivo)),
+    h('div', { class: 'prima-vista' }, sinistra, destra),
+    sezione('Tutte le porte della verifica', () => h('div', {}, porteTabella(f.porte), f.voci_prova_finale ? porteTabella(f.voci_prova_finale) : null)),
+    sezione('Anni del walk-forward', () => h('table', {}, h('thead', {}, h('tr', {}, ['Anno', 'Scelta della procedura con gli anni precedenti', 'Trade', 'Esc. a trade'].map(t => h('th', {}, t)))),
+      h('tbody', {}, f.walkforward.anni.map(r => h('tr', {}, h('td', {}, r.anno), h('td', { class: 'sx' }, r.etichetta), h('td', {}, r.n), h('td', { class: segno(r.media_esc) }, nf(r.media_esc, 3))))))));
+}
+async function paginaAlbero(nome) {
+  const mio = giro;
+  const a = await api('/alberi/' + nome), ih = a.intestazione;
+  const figli = {}; a.nodi.forEach(n => { (figli[n.genitore] = figli[n.genitore] || []).push(n); });
+  const scelte = {}; (a.livelli || []).forEach(l => { scelte[l.genitore + l.livello] = l; });
+  const righe = [];
+  const visita = (n, prof) => {
+    righe.push(...rigaNodo(n, prof));
+    ['L2', 'L3'].forEach(lv => {
+      const ff = (figli[n.id] || []).filter(x => x.livello === lv);
+      if (!ff.length) return;
+      const s = scelte[n.id + lv];
+      if (s) righe.push(h('tr', { class: 'nota-livello' }, h('td', {}), h('td', { colspan: 9, class: 'sx muto', style: `padding-left:${8 + (prof + 1) * 22}px` },
+        `${lv === 'L2' ? 'Ingressi' : 'Uscite'} provati: ${ff.length}. Scelta fra fratelli misurata fuori campione (CPCV): mediana ${nf(s.mediana * a.euro_per_escursione_oggi, 1)} € a trade, 10° percentile ${nf(s.p10 * a.euro_per_escursione_oggi, 1)} €`)));
+      ff.forEach(x => visita(x, prof + 1));
+    });
+  };
+  (figli[null] || figli['null'] || a.nodi.filter(n => !n.genitore)).forEach(r => visita(r, 0));
+  vedi(mio, h('p', {}, h('a', { href: '#/alberi' }, '← Alberi')), h('h1', {}, nome),
+    h('div', { class: 'pannello' }, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
+      h('p', { class: 'muto' }, `${ih.prodotto} ${ih.barre} min · gemello ${ih.gemello || 'nessuno'} · in-sample ${a.anni[0]}-${a.anni[1]} · ${a.prove} prove su ${a.budget}${a.budget_esaurito ? ' (budget esaurito)' : ''} · ` +
+        `euro di oggi: 1 escursione = ${nf(a.euro_per_escursione_oggi, 0)} € (escursione media del ${a.anni[1]}: ${nf(a.esc_oggi_punti, 0)} punti)`)),
+    h('h2', {}, 'Rami'),
+    h('div', { class: 'tabella-cont' }, h('table', { class: 'albero' }, h('thead', {}, h('tr', {}, [['', ''], ['Nodo', '', 'sx'], ['€ a trade', 'Guadagno medio netto con la volatilità di oggi; G = quante volte copre la soglia per la sua durata'], ['Trade l\'anno', ''],
+      ['t', 'Guadagno medio diviso il suo errore'], ['R²', 'Regolarità della curva'], ['Drawdown', 'In euro di oggi'], ['Segnale isolato', 'Guadagno a trade meno la stessa finestra in tutti i giorni'], ['Esito', ''], ['Prima porta non superata', '', 'sx']].map(([t, ti, cl]) => h('th', { title: ti || null, class: cl || null }, t)))),
+      h('tbody', {}, righe))),
+    h('p', { class: 'muto' }, 'Clic su una riga per vedere tutte le porte del nodo.'),
+    h('h2', {}, 'Foglie verificate'),
+    a.foglie.length ? h('div', {}, a.foglie.map(f => schedaFoglia(a, f))) : h('p', { class: 'muto' }, 'Nessuna foglia: tutte le radici si sono fermate prima degli ingressi.'));
+}
+
 // ------------------------------------------------------------------ registro e portafoglio
 let famigliaRegistro = '';
 async function paginaRegistro() {
@@ -561,7 +671,8 @@ function paginaPortafoglio() {
 
 // ------------------------------------------------------------------ router
 const ROTTE = [[/^\/sistemi$/, paginaSistemi], [/^\/sistemi\/([^/]+)\/([^/]+)(?:\/[a-z]+)?$/, paginaScheda], [/^\/esperimenti$/, paginaEsperimenti],
-  [/^\/esperimenti\/([^/]+)$/, paginaEsperimento], [/^\/registro$/, paginaRegistro], [/^\/portafoglio$/, paginaPortafoglio]];
+  [/^\/esperimenti\/([^/]+)$/, paginaEsperimento], [/^\/alberi$/, paginaAlberi], [/^\/alberi\/([^/]+)$/, paginaAlbero],
+  [/^\/registro$/, paginaRegistro], [/^\/portafoglio$/, paginaPortafoglio]];
 async function render() {
   const mio = ++giro, p = decodeURIComponent(location.hash.replace(/^#/, '')) || '/sistemi';
   document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('attiva', p.startsWith('/' + a.dataset.voce)));

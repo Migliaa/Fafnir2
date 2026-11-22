@@ -78,6 +78,16 @@ FAMIGLIE = {
     # giorno di ieri ribassista dopo uno rialzista (esclusione dello short dell'oro): 1 o 0
     "inversione_ieri": (lambda: ((pl.col("c1") < pl.col("o1")) & (pl.col("c2") > pl.col("o2"))).cast(pl.Float64),
                         lambda: ((pl.col("c1") > pl.col("o1")) & (pl.col("c2") < pl.col("o2"))).cast(pl.Float64)),
+    # --- protocollo ad albero (2026-11-22): ipotesi calcolabili sullo stesso strumento, quindi traducibili in ProRealTime
+    # volatilità del periodo: escursione media di 20 giorni su quella di 100 (al posto del VIX, che ProRealTime non
+    # può leggere dentro una strategia sul DAX)
+    "vol_relativa": (lambda: ESC / pl.col("esc_lunga"),) * 2,
+    # movimento dall'apertura di Wall Street (barra delle 15:30) in escursioni: conferma americana senza l'S&P
+    "dal_1530": (lambda: (c - pl.col("o1530")) / ESC, lambda: (pl.col("o1530") - c) / ESC),
+    # terzo venerdì del mese (scadenza delle opzioni): 1 o 0
+    "terzo_venerdi": (lambda: ((pl.col("data").dt.weekday() == 5) & pl.col("giorno_mese").is_between(15, 21)).cast(pl.Float64),) * 2,
+    # giorno del mese di calendario (fine mese: >= 25)
+    "giorno_mese": (lambda: pl.col("giorno_mese").cast(pl.Float64),) * 2,
 }
 
 OPERATORI = {">": pl.Expr.gt, ">=": pl.Expr.ge, "<": pl.Expr.lt, "<=": pl.Expr.le, "==": pl.Expr.eq}

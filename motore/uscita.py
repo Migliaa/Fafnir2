@@ -36,7 +36,21 @@ TRADUZIONI = {
     "minimo_oggi_su_ieri": ("(DLow(0) - DLow(1)) / EscMedia", "(DHigh(1) - DHigh(0)) / EscMedia", False),
     "inversione_ieri": ("DClose(1) < DOpen(1) AND DClose(2) > DOpen(2)",
                         "DClose(1) > DOpen(1) AND DClose(2) < DOpen(2)", True),
+    "vol_relativa": ("EscMedia / EscLunga", "EscMedia / EscLunga", False),
+    "dal_1530": ("(close - O1530) / EscMedia", "(O1530 - close) / EscMedia", False),
+    "terzo_venerdi": ("dayofweek = 5 AND Day >= 15 AND Day <= 21", "dayofweek = 5 AND Day >= 15 AND Day <= 21", True),
+    "giorno_mese": ("Day", "Day", False),
 }
+# righe di calcolo che alcune famiglie richiedono prima del segnale
+PREPARAZIONE = {
+    "vol_relativa": ["// escursione media di 100 giorni, da ieri", "EscSommaL = 0", "FOR i = 1 TO 100",
+                     "   EscSommaL = EscSommaL + (DHigh(i) - DLow(i))", "NEXT", "EscLunga = EscSommaL / 100"],
+    "dal_1530": ["// apertura della barra delle 15:30 (Wall Street); 0 prima di quell'ora",
+                 "IF Date <> DataPrec1530 THEN", "   O1530 = 0", "ENDIF", "DataPrec1530 = Date",
+                 "IF OpenTime = 153000 THEN", "   O1530 = open", "ENDIF"],
+}
+# condizione aggiunta al segnale quando la grandezza non esiste ancora (in Python vale null e la condizione è falsa)
+VALIDA = {"dal_1530": "O1530 > 0", "vol_relativa": "EscLunga > 0"}
 
 
 def _n(x) -> str:
@@ -119,6 +133,10 @@ def traduci(regola: dict, prodotto: str, barre: int) -> dict:
             cond.append(f"(time >= {_hhmmss(da)} AND time <= {_hhmmss(a)})")
         else:
             cond.append(f"(time >= {_hhmmss(da)} OR time <= {_hhmmss(a)})")
+    for fam in dict.fromkeys(c[0].split(":")[0] for c in regola.get("cond", [])):
+        s += PREPARAZIONE.get(fam, [])
+        if fam in VALIDA:
+            cond.append(VALIDA[fam])
     for k, c in enumerate(regola.get("cond", []), 1):
         nome, op, soglia, *grezza = c
         espr, booleana = _grandezza(nome, 1 if grezza else lato)

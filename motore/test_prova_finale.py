@@ -64,14 +64,14 @@ def test_calcola_i_due_periodi_e_segna_il_tentativo():
     with _Ambiente(PERIODI) as (id_, amb):
         file = amb.tmp / "c01_holdout.parquet"
         r = prova_finale.esegui("TST", 60, REGOLA, id_, file)
-        assert not r["gia_usata"] and r["avanti"]["n"] > 300 and r["indietro"]["n"] > 30, r
+        assert not r["gia_usata"] and r["avanti"]["n"] > 300 and r["antico"]["n"] > 30 and r["vicino"] is None, r
         assert r["avanti"]["da"] >= "2024-01-01" and r["avanti"]["a"] <= "2025-05-31", r["avanti"]
-        assert r["indietro"]["a"] <= "2010-12-31"
+        assert r["antico"]["a"] <= "2010-12-31"
         assert r["avanti"]["utile"] > 0 and r["avanti"]["guadagno_medio"] > 0           # il rialzo c'è
         assert r["avanti"]["euro_punto"] == 2.0
         assert validazione.holdout_usato(id_)["risultato"]["avanti"] == r["avanti"]
         s = pl.read_parquet(file)
-        assert s.columns == ["data", "periodo", "punti"] and set(s["periodo"]) == {"indietro", "avanti"}
+        assert s.columns == ["data", "periodo", "punti", "netto"] and set(s["periodo"]) == {"antico", "avanti"}
         assert s["data"].max().isoformat() <= "2025-05-31" and s.filter(pl.col("periodo") == "avanti")["data"].min().year == 2024
         assert abs(s.filter(pl.col("periodo") == "avanti")["punti"].sum() * 2.0 - r["avanti"]["utile"]) < 1e-6
 
@@ -82,7 +82,7 @@ def test_non_si_ripete_sullo_stesso_tentativo():
         n = len(amb.letture)
         assert n > 0
         r2 = prova_finale.esegui("TST", 60, REGOLA, id_)           # nemmeno un dato letto
-        assert len(amb.letture) == n and r2["gia_usata"] and r2["avanti"] == r1["avanti"] and r2["indietro"] == r1["indietro"]
+        assert len(amb.letture) == n and r2["gia_usata"] and r2["avanti"] == r1["avanti"] and r2["antico"] == r1["antico"]
         # nemmeno con un'altra regola: il tentativo ha già consumato la prova
         r3 = prova_finale.esegui("TST", 60, {**REGOLA, "uscita": {"barre": 3}}, id_)
         assert len(amb.letture) == n and r3["avanti"] == r1["avanti"]
@@ -103,13 +103,13 @@ def test_non_legge_oltre_il_taglio_e_non_segna_se_fallisce():
         else:
             raise AssertionError("dati oltre il taglio accettati")
         assert validazione.holdout_usato(id_) is None
-    # senza dati prima del 2011 non c'è holdout all'indietro; senza dati nel periodo in avanti non c'è nemmeno quello
+    # senza dati prima del 2014 non c'è holdout all'indietro; senza dati nel periodo in avanti non c'è nemmeno quello
     with _Ambiente([(datetime(2023, 12, 1), datetime(2024, 3, 1))]) as (id_, amb):
         r = prova_finale.esegui("TST", 60, REGOLA, id_)
-        assert r["indietro"] is None and r["avanti"]["n"] > 0 and r["avanti"]["a"] <= "2024-03-01"
-    with _Ambiente([(datetime(2011, 1, 3), datetime(2011, 3, 1))]) as (id_, amb):
+        assert r["antico"] is None and r["vicino"] is None and r["avanti"]["n"] > 0 and r["avanti"]["a"] <= "2024-03-01"
+    with _Ambiente([(datetime(2016, 1, 4), datetime(2016, 3, 1))]) as (id_, amb):
         r = prova_finale.esegui("TST", 60, REGOLA, id_)
-        assert r["avanti"] is None and r["indietro"] is None
+        assert r["avanti"] is None and r["vicino"] is None and r["antico"] is None
         assert giudizio._motivo(giudizio.prova_finale_voci(r, 20.0)) == "nessun trade fuori campione"
 
 
@@ -148,10 +148,10 @@ def test_arricchisci_legge_gli_holdout_solo_per_chi_passa_e_una_volta():
                 setattr(giudizio, k, v)
             r = esperimento.arricchisci("prova")           # con i filtri larghi passano la scoperta e consumano la prova
             passano = [c for c in r["candidati"] if c["motivo"] == "nessun trade fuori campione"]
-            assert len(passano) == 3 and len(chiamate) == 6, (len(passano), chiamate)     # due periodi a testa
+            assert len(passano) == 3 and len(chiamate) == 9, (len(passano), chiamate)     # tre periodi a testa
             assert len([x for x in validazione._righe() if x.get("holdout_usato")]) == 3
             r = esperimento.arricchisci("prova")           # un secondo giro non legge più nulla
-            assert len(chiamate) == 6 and len([c for c in r["candidati"] if c["motivo"] == "nessun trade fuori campione"]) == 3
+            assert len(chiamate) == 9 and len([c for c in r["candidati"] if c["motivo"] == "nessun trade fuori campione"]) == 3
         finally:
             prova_finale._periodo = vera
 

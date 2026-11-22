@@ -18,6 +18,13 @@ TRADE_ANNO_MIN = 12.0            # trade l'anno in media, circa uno al mese
 R2_MIN = 0.85                    # R² della curva netta
 ANNI_POSITIVI_MIN = 0.70         # quota di anni chiusi in utile
 FUORI_CAMPIONE_QUOTA_MIN = 0.5   # prova finale: guadagno medio >= questa quota di quello in-sample (e utile positivo)
+# Fuori campione all'indietro (Andrea, 2026-11-22: un sistema può iniziare a funzionare dall'oggi al domani, quindi il
+# passato pesa meno del futuro). "Disastroso", in escursioni medie per confrontare periodi con volatilità diverse:
+# drawdown oltre DD_VOLTE volte quello in-sample, oppure perdita media a trade oltre PERDITA_QUOTA del guadagno medio
+# in-sample. 2011-2013 scarta anche se il sistema chiude in perdita; prima del 2011 solo se è disastroso.
+DISASTRO = {"vicino": {"dd_volte": 1.5, "perdita_quota": 0.5, "perdita_scarta": True},
+            "antico": {"dd_volte": 2.0, "perdita_quota": 1.0, "perdita_scarta": False}}
+NOMI_PERIODI = {"avanti": "2024-2025", "vicino": "2011-2013", "antico": "prima del 2011"}
 # ---- cancello statistico
 DSR_MIN = 0.95                   # sul numero effettivo di prove dell'esperimento
 PBO_MAX, PBO_MIN_COMBINAZIONI = 0.2, 4   # PBO della famiglia, solo se ha almeno 4 combinazioni
@@ -238,7 +245,7 @@ def soglia_guadagno(ore_medie: float) -> float:
     return SOGLIE_GUADAGNO[-1][1]
 
 
-def misure(trade, date, euro_punto: float | None, n_barre: int | None = None, anni: tuple = (2011, 2023)) -> dict:
+def misure(trade, date, euro_punto: float | None, n_barre: int | None = None, anni: tuple = (2014, 2023)) -> dict:
     """Le misure su cui giudicano i filtri, da una tabella dei trade (colonne `ingresso`, `uscita`, `barre`,
     `punti`, `costo`) per 1 CFD IG. `date` sono i giorni di borsa (datetime64[D], ordinati) del periodo,
     `n_barre` il numero di barre del periodo (per il tempo in mercato), `anni` gli estremi del periodo."""
@@ -247,7 +254,7 @@ def misure(trade, date, euro_punto: float | None, n_barre: int | None = None, an
     anni_n = anni[1] - anni[0] + 1
     out = {"euro_punto": euro_punto, "n": n, "trade_anno": n / anni_n, "guadagno_medio": None, "lordo_medio": None,
            "costo_medio": None, "rapporto_costi": None, "ore_medie": None, "in_mercato": None, "r2": None,
-           "anni_positivi": None, "utile": None, "drawdown": None, "utile_su_dd": None}
+           "anni_positivi": None, "utile": None, "drawdown": None, "utile_su_dd": None, "media_esc": None, "dd_esc": None}
     if n:
         out["ore_medie"] = float((trade["uscita"] - trade["ingresso"]).dt.total_seconds().mean() / 3600)
         if n_barre:
@@ -268,6 +275,10 @@ def misure(trade, date, euro_punto: float | None, n_barre: int | None = None, an
     out["drawdown"] = float(dd)
     out["utile_su_dd"] = out["utile"] / dd if dd > 0 else None
     out["r2"] = float(metriche.r2(g)) if g.std() > 0 else None
+    if "netto" in trade.columns:                 # in escursioni medie: confrontabile fra periodi di volatilità diversa
+        ne = trade["netto"].to_numpy()
+        out["media_esc"] = float(ne.mean())
+        out["dd_esc"] = float(metriche.drawdown(np.bincount(giorno, weights=ne, minlength=len(d)))["massimo"])
     anno_u = trade["uscita"].dt.year().to_numpy()
     out["anni_positivi"] = float(np.mean([punti[anno_u == a].sum() > 0 for a in range(anni[0], anni[1] + 1)]))
     return out
@@ -289,7 +300,8 @@ def _num(x: float, cifre: int = 2) -> str:
 
 def _filtro(nome, valore, soglia, ok, spiegazione, motivo):
     """Voce di un filtro; `motivo` è la frase usata se non passa."""
-    return {"nome": nome, "valore": valore, "soglia": soglia, "esito": _e(ok), "spiegazione": spiegazione, "motivo": motivo}
+    esito = "info" if ok == "info" else _e(ok)
+    return {"nome": nome, "valore": valore, "soglia": soglia, "esito": esito, "spiegazione": spiegazione, "motivo": motivo}
 
 
 def filtri_andrea(m: dict) -> list[dict]:
@@ -334,9 +346,36 @@ def cancello_statistico(dsr, pbo) -> list[dict]:
     return voci
 
 
-def prova_finale_voci(prova: dict | None, guadagno_in_sample: float | None) -> list[dict]:
-    """Prova finale (risultato di `prova_finale.esegui`, None se non eseguita): utile positivo e guadagno medio
-    >= metà di quello in-sample, sul periodo in avanti."""
+def disastro(periodo: dict | None, nome: str, in_sample: dict | None) -> list[dict]:
+    """Voci del fuori campione all'indietro `nome` ("vicino" o "antico") rispetto alle misure in-sample in escursioni
+    (`media_esc`, `dd_esc`). Senza dati nel periodo (prodotto più giovane) non scarta."""
+    r, et = DISASTRO[nome], NOMI_PERIODI[nome]
+    if not periodo or not periodo.get("n") or periodo.get("media_esc") is None:
+        return [_filtro(f"Fuori campione {et}", None, "se ci sono dati", "info", "Nessun dato o nessun trade nel periodo.", None)]
+    me, dd = periodo["media_esc"], periodo.get("dd_esc") or 0.0
+    voci = []
+    ref_dd, ref_me = (in_sample or {}).get("dd_esc"), (in_sample or {}).get("media_esc")
+    if ref_dd:
+        lim = r["dd_volte"] * ref_dd
+        voci.append(_filtro(f"Drawdown {et}", dd / ref_dd, f"<= {_num(r['dd_volte'], 1)} volte quello in-sample", dd <= lim,
+                            "Drawdown del periodo in escursioni medie diviso quello in-sample: confronta periodi con volatilità diverse.",
+                            f"{et} disastroso: drawdown {_num(dd / ref_dd, 1)} volte quello in-sample"))
+    if ref_me and ref_me > 0:
+        lim = -r["perdita_quota"] * ref_me
+        voci.append(_filtro(f"Guadagno medio {et}", me / ref_me, f">= -{r['perdita_quota']:.0%} di quello in-sample", me >= lim,
+                            "Guadagno medio a trade del periodo in escursioni, in rapporto a quello in-sample.",
+                            f"{et} disastroso: perde a trade il {-me / ref_me:.0%} di quanto guadagna in-sample"))
+    if r["perdita_scarta"]:
+        voci.append(_filtro(f"Utile {et}", periodo.get("utile"), ">= 0", me >= 0, "Utile netto del periodo.", f"{et} in perdita"))
+    else:
+        voci.append(_filtro(f"Utile {et}", periodo.get("utile"), "informativo", "info", "Utile netto del periodo: pesa poco, non scarta.", None))
+    return voci
+
+
+def prova_finale_voci(prova: dict | None, guadagno_in_sample: float | None, in_sample_esc: dict | None = None) -> list[dict]:
+    """Prova finale (risultato di `prova_finale.esegui`, None se non eseguita). Decide il periodo in avanti: utile
+    positivo e guadagno medio >= metà di quello in-sample. 2011-2013 e prima del 2011 scartano solo secondo `DISASTRO`
+    (servono le misure in-sample in escursioni `in_sample_esc`; senza, non si controllano)."""
     if prova is None:
         return [_filtro("Fuori campione", None, "da eseguire", None, "La prova finale non è stata eseguita.", "prova finale non eseguita")]
     avanti = prova.get("avanti")
@@ -351,13 +390,16 @@ def prova_finale_voci(prova: dict | None, guadagno_in_sample: float | None) -> l
         voci.append(_filtro("Guadagno medio fuori campione", gm, f">= {minimo:.1f} € ({FUORI_CAMPIONE_QUOTA_MIN:.0%} di {guadagno_in_sample:.1f} €)",
                             gm >= minimo, "Guadagno medio a trade nel periodo di prova finale, rispetto a quello in-sample.",
                             f"fuori campione {_euro(gm, minimo)} a trade, sotto la metà dei {_euro(guadagno_in_sample)} in-sample"))
+    if in_sample_esc:
+        for nome in ("vicino", "antico"):
+            voci += disastro(prova.get(nome), nome, in_sample_esc)
     return voci
 
 
 def _motivo(voci: list[dict]) -> str | None:
     """Motivo principale: la prima voce che non passa (rossa o con dato mancante)."""
     for v in voci:
-        if v["esito"] in ("rosso", "grigio"):
+        if v["esito"] in ("rosso", "grigio") and v["motivo"]:
             return v["motivo"]
     return None
 
@@ -384,7 +426,7 @@ def giudica(scheda: dict | None, robustezza: dict | None, misure: dict | None = 
     motivo = _motivo(scoperta)
     voci_pf = None
     if motivo is None:
-        voci_pf = prova_finale_voci(prova_finale, misure.get("guadagno_medio"))
+        voci_pf = prova_finale_voci(prova_finale, misure.get("guadagno_medio"), misure)
         motivo = _motivo(voci_pf)
     return {"esito": "scartato" if motivo else "candidato", "motivo": motivo or "passa filtri, cancello statistico e prova finale",
             "filtri": voci_filtri, "statistico": voci_stat, "prova_finale": voci_pf, "misure": misure,

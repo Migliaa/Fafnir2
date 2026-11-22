@@ -17,7 +17,7 @@ CAMPI = {"nome": "prova", "ipotesi": "il prezzo sale fra le 09 e le 10", "meccan
 
 def _minuti_finti(nome, cache=True):
     # tre anni di minuti; passeggiata casuale, più un rialzo fisso fra le 09:00 e le 10:00 di ogni giorno
-    t = pl.datetime_range(datetime(2011, 1, 3), datetime(2014, 1, 1), "1m", time_zone="Europe/Rome",
+    t = pl.datetime_range(datetime(2014, 1, 6), datetime(2017, 1, 1), "1m", time_zone="Europe/Rome",
                           eager=True, closed="left")
     rng = np.random.default_rng(5)
     r = rng.normal(0, 0.02, len(t))
@@ -82,15 +82,15 @@ def test_controlla_rifiuta():
         assert not r["ok"] and any("direzione" in x for x in r["errori"]), r
         r = esperimento.controlla(_scrivi(tmp, prodotti=["XXX"]))
         assert not r["ok"], r
-        # budget: con Sharpe obiettivo 0,5 su 13 anni le prove ammesse sono 5; in verticale la metà
+        # budget: con Sharpe obiettivo 0,5 su 10 anni le prove ammesse sono 3; in verticale la metà
         r = esperimento.controlla(_scrivi(tmp, sr_obiettivo=0.5))
-        assert not r["ok"] and r["budget"] == 5.1 and r["max_combinazioni"] == 5, r
-        assert "al massimo 5 combinazioni" in r["errori"][0], r
-        r = esperimento.controlla(_scrivi(tmp, sr_obiettivo=0.5, griglia={"uscita.barre": [0, 1, 2, 3, 4]}))
+        assert not r["ok"] and r["budget"] == 3.5 and r["max_combinazioni"] == 3, r
+        assert "al massimo 3 combinazioni" in r["errori"][0], r
+        r = esperimento.controlla(_scrivi(tmp, sr_obiettivo=0.5, griglia={"uscita.barre": [0, 1, 2]}))
         assert r["ok"], r
         r = esperimento.controlla(_scrivi(tmp, sr_obiettivo=0.5, modo="verticale",
-                                          griglia={"uscita.barre": [0, 1, 2, 3, 4]}))
-        assert not r["ok"] and r["max_combinazioni"] == 2, r
+                                          griglia={"uscita.barre": [0, 1, 2]}))
+        assert not r["ok"] and r["max_combinazioni"] == 1, r
         # lo specchio raddoppia le prove
         r = esperimento.controlla(_scrivi(tmp, sr_obiettivo=0.5, specchio=True,
                                           griglia={"uscita.barre": [0, 1, 2, 3, 4]}))

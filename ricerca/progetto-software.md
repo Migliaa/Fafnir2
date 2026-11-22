@@ -35,6 +35,8 @@ Andrea verifica i sistemi trovati su ProRealTime, con i CFD IG, sull'ultimo anno
 
 Deciso il 2026-11-22 sulla ricerca in `fonti/paper/validazione-e-metriche.md` (sezione A10, con una modifica sulle date).
 
+**Aggiornamento del 2026-11-22 sera, su richiesta di Andrea**: la scoperta è **2014-2023** (10 blocchi, 45 combinazioni della CPCV; con 10 anni 10.000 prove richiedono uno Sharpe di 1,36). 2011-2013 e prima del 2011 diventano fuori campione all'indietro con peso minore del 2024-2025: scartano solo se il sistema perde (2011-2013) o va in modo disastroso. La tabella sotto resta come storia della decisione; i periodi in uso sono in `motore/config.py` e in `ricerca/protocollo-albero.md`.
+
 | Periodo | Ruolo | Come si usa |
 |---|---|---|
 | inizio dati → 2010 | holdout interno all'indietro | una volta sola, sui finalisti; contiene la crisi 2008 per i prodotti che partono dal 2006-2008, solo il 2010 per gli altri |
@@ -164,7 +166,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 4 | `metriche` e `validazione` (delegabile con specifica) | fatta (2026-11-22), specifica in `spec-fase-4.md` |
 | 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | fatta (2026-11-22): long di 165 DAX e short dell'oro ritrovati, gli altri tre deboli |
 | 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | fatta (2026-11-22), specifica in `spec-fase-6.md` |
-| 7 | primi esperimenti: long DAX a 5 minuti, poi setaccio e trapianti dei modelli 128 e 185 (coda e rapporto del mattino stanno fuori dal software) | |
+| 7 | primi esperimenti: long DAX a 5 minuti, poi setaccio e trapianti dei modelli 128 e 185 (coda e rapporto del mattino stanno fuori dal software) | in corso: primo esperimento DAX tutto scartato; ricerca ad albero (`protocollo-albero.md`, `motore/albero.py`) fatta, primo albero sul momento di chiusura del DAX fermo alle radici |
 | 8 | `uscita` verso ProRealCode e `portafoglio` (delegabili) | |
 | 9 | `cruscotto`: applicazione locale per Andrea (`progetto-cruscotto.md`, `spec-cruscotto.md`) | prima versione fatta (2026-11-22): `python -m cruscotto` |
 

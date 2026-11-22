@@ -65,7 +65,7 @@ def test_prova_finale():
     assert G._motivo(avanti(utile=-1.0)) == "fuori campione negativo"
     assert G._motivo(avanti(utile=0.0)) == "fuori campione negativo"
     assert G._motivo(G.prova_finale_voci({"avanti": {"n": 0, "utile": None, "guadagno_medio": None}}, 20.0)) == "nessun trade fuori campione"
-    assert G._motivo(G.prova_finale_voci({"avanti": None, "indietro": None}, 20.0)) == "nessun trade fuori campione"
+    assert G._motivo(G.prova_finale_voci({"avanti": None, "vicino": None, "antico": None}, 20.0)) == "nessun trade fuori campione"
     assert G._motivo(G.prova_finale_voci(None, 20.0)) == "prova finale non eseguita"
 
 
@@ -99,6 +99,26 @@ def test_misure_da_una_tabella_di_trade():
     assert abs(m["utile"] - 2.0 * sum(punti)) < 1e-9 and m["drawdown"] > 0 and m["anni_positivi"] == 0.5
     assert abs(m["utile_su_dd"] - m["utile"] / m["drawdown"]) < 1e-9 and 0 < m["r2"] <= 1
     assert G.misure(tr, date, None)["guadagno_medio"] is None and G.misure(tr, date, None)["n"] == 8
+
+
+
+def test_fuori_campione_all_indietro_pesa_meno():
+    ins = {"media_esc": 0.10, "dd_esc": 2.0}
+    av = {"n": 20, "utile": 100.0, "guadagno_medio": 15.0}
+    per = lambda **kw: {"n": 30, "utile": 50.0, "media_esc": 0.05, "dd_esc": 2.0, **kw}
+    mot = lambda vicino=None, antico=None: G._motivo(G.prova_finale_voci({"avanti": av, "vicino": vicino, "antico": antico}, 20.0, ins))
+    assert mot(per(), per()) is None
+    # 2011-2013: scarta se in perdita, anche lieve; prima del 2011 no
+    assert mot(per(utile=-5.0, media_esc=-0.01)) == "2011-2013 in perdita"
+    assert mot(per(), per(utile=-5.0, media_esc=-0.01)) is None
+    # disastroso: drawdown oltre 1,5 volte (vicino) o 2 volte (antico) quello in-sample
+    assert mot(per(dd_esc=3.0)) is None and mot(per(dd_esc=3.01)).startswith("2011-2013 disastroso: drawdown")
+    assert mot(per(), per(dd_esc=4.0)) is None and mot(per(), per(dd_esc=4.01)).startswith("prima del 2011 disastroso")
+    # disastroso: perdita a trade oltre il 100% del guadagno in-sample prima del 2011
+    assert mot(per(), per(media_esc=-0.10, utile=-1.0)) is None
+    assert "perde a trade il 101%" in mot(per(), per(media_esc=-0.101, utile=-1.0))
+    # periodo senza dati: non scarta
+    assert mot(None, None) is None
 
 
 if __name__ == "__main__":

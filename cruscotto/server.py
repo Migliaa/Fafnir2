@@ -5,6 +5,7 @@ L'unica scrittura è `risultati/cruscotto/decisioni.json` (POST sulla decisione 
 from __future__ import annotations
 
 import json
+import math
 import mimetypes
 import re
 import threading
@@ -26,6 +27,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 CARTELLA_ESPERIMENTI = RISULTATI / "esperimenti"       # risultati dei lanci
 DEFINIZIONI = RADICE / "esperimenti"                   # file d'esperimento e resoconti
 DECISIONI = RISULTATI / "cruscotto" / "decisioni.json"
+CARTELLA_ALBERI = RISULTATI / "alberi"                 # risultati di `motore.albero lancia`
 STATI = ["da guardare", "da approfondire", "in verifica", "live", "scartato"]
 ESITI_VERIFICA = ["", "confermata", "non confermata", "inconcludente"]
 NOME = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -146,7 +148,7 @@ def _completa(nome: str, id_: str, euro_punto: float | None) -> dict | None:
     fh = cart / f"{id_}_holdout.parquet"
     if fh.exists():
         h = pl.read_parquet(fh).sort("data")
-        for periodo in ("indietro", "avanti"):
+        for periodo in ("antico", "indietro", "vicino", "avanti"):     # "indietro": file di prima del 2026-11-22
             x = h.filter(pl.col("periodo") == periodo)
             if x.height:
                 parti.append((periodo, x["data"], x["punti"].to_numpy()))
@@ -279,6 +281,34 @@ def api_sistema(nome: str, id_: str) -> dict:
             "commento_ia": _commento(nome, id_), "decisione": _decisione(_decisioni(), nome, id_)}
 
 
+def api_alberi() -> list[dict]:
+    out = []
+    if not CARTELLA_ALBERI.exists():
+        return out
+    for d in sorted(CARTELLA_ALBERI.iterdir()):
+        f = d / "albero.json"
+        if not f.exists():
+            continue
+        a = _json(f)
+        radici = [n for n in a["nodi"] if n["livello"] == "L0"]
+        out.append({"nome": d.name, "prodotto": a["intestazione"]["prodotto"], "barre": a["intestazione"]["barre"],
+                    "quando": a["quando"], "prove": a["prove"], "budget": a["budget"], "radici": len(radici),
+                    "radici_vive": sum(n["esito"] != "scartato" for n in radici), "foglie": len(a["foglie"]),
+                    "candidati": sum(x["esito"] == "candidato" for x in a["foglie"])})
+    return out
+
+
+def api_albero(nome: str) -> dict:
+    if not NOME.match(nome):
+        raise NonTrovato(nome)
+    f = CARTELLA_ALBERI / nome / "albero.json"
+    if not f.exists():
+        raise NonTrovato(nome)
+    a = _json(f)
+    a["soglie_guadagno"] = [[None if math.isinf(x) else x, e] for x, e in giudizio.SOGLIE_GUADAGNO]
+    return a
+
+
 def api_registro(famiglia: str | None) -> dict:
     righe = validazione._righe()
     famiglie = sorted({r["famiglia"] for r in righe})
@@ -401,6 +431,10 @@ class Gestore(BaseHTTPRequestHandler):
             return api_sistemi()
         if len(p) == 3 and p[0] == "sistemi":
             return api_sistema(p[1], p[2])
+        if p == ["alberi"]:
+            return api_alberi()
+        if len(p) == 2 and p[0] == "alberi":
+            return api_albero(p[1])
         if p == ["registro"]:
             return api_registro((q.get("famiglia") or [None])[0])
         raise NonTrovato("/".join(["api", *p]))

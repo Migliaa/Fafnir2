@@ -61,8 +61,39 @@ def test_curva_con_i_due_holdout():
         server.CARTELLA_ESPERIMENTI = vero
 
 
+def test_alberi():
+    """Elenco e dettaglio di un albero finto in una cartella temporanea; nomi non ammessi rifiutati."""
+    vecchia = server.CARTELLA_ALBERI
+    server.CARTELLA_ALBERI = Path(tempfile.mkdtemp())
+    try:
+        assert server.api_alberi() == []
+        d = server.CARTELLA_ALBERI / "prova"
+        d.mkdir()
+        nodi = [{"id": "n001", "livello": "L0", "esito": "passa"}, {"id": "n002", "livello": "L0", "esito": "scartato"},
+                {"id": "n003", "livello": "L2", "esito": "pronto"}]
+        foglie = [{"id": "n003", "esito": "candidato"}, {"id": "n001", "esito": "scartato"}]
+        (d / "albero.json").write_text(json.dumps({"intestazione": {"prodotto": "FDAX", "barre": 5}, "quando": "2026-11-22T10:00:00",
+                                                   "prove": 3, "budget": 200, "nodi": nodi, "foglie": foglie}), encoding="utf-8")
+        (server.CARTELLA_ALBERI / "vuota").mkdir()                     # cartella senza albero.json: ignorata
+        l = server.api_alberi()
+        assert l == [{"nome": "prova", "prodotto": "FDAX", "barre": 5, "quando": "2026-11-22T10:00:00", "prove": 3, "budget": 200,
+                      "radici": 2, "radici_vive": 1, "foglie": 2, "candidati": 1}], l
+        a = server.api_albero("prova")
+        assert a["nodi"] == nodi and a["soglie_guadagno"][-1] == [None, 50.0]
+        for cattivo in ("../prova", "vuota", "nessuno"):
+            try:
+                server.api_albero(cattivo)
+            except server.NonTrovato:
+                pass
+            else:
+                raise AssertionError(cattivo)
+    finally:
+        server.CARTELLA_ALBERI = vecchia
+
+
 def main():
     test_curva_con_i_due_holdout()
+    test_alberi()
     tmp = Path(tempfile.mkdtemp())
     server.DECISIONI = tmp / "cruscotto" / "decisioni.json"
     srv = server.crea_server(0)
@@ -121,7 +152,7 @@ def main():
         assert s["codice"]["codice"] == (server.CARTELLA_ESPERIMENTI / ESP / "candidati" / "c01.prc").read_text(encoding="utf-8")
         assert s["commento_ia"] is None or {"data", "modello", "testo"} <= set(s["commento_ia"])
         reg = j("/api/registro")
-        assert len(reg["tentativi"]) == reg["conteggio"]["n_prove"] == 24
+        assert len(reg["tentativi"]) == reg["conteggio"]["n_prove"] >= 24
         assert len(j(f"/api/registro?famiglia={ESP}-specchio")["tentativi"]) == 12
 
         # decisione: scrittura valida, rilettura, rifiuti

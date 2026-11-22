@@ -116,11 +116,11 @@ def test_controlla_dice_lo_sharpe_minimo_per_il_numero_di_prove():
     with _Ambiente() as tmp:
         grande = {"da": ORE[:20], "uscita.barre": list(range(10)), "cond.0.2": [round(i * 0.1, 1) for i in range(50)]}   # 10.000
         r = esperimento.controlla(_scrivi(tmp, regola=REGOLA, griglia=grande, sr_obiettivo=1.0))
-        assert r["combinazioni"] == 10000 and abs(r["sr_minimo"] - 1.19) < 0.005, r
-        assert not r["ok"] and "richiedono sr_obiettivo >= 1.19" in r["errori"][0], r["errori"]
-        assert esperimento.controlla(_scrivi(tmp, regola=REGOLA, griglia=grande, sr_obiettivo=1.2))["ok"]
-        v = esperimento.controlla(_scrivi(tmp, regola=REGOLA, griglia=grande, sr_obiettivo=1.2, modo="verticale"))
-        assert not v["ok"] and v["sr_minimo"] > 1.2, v         # in verticale il budget è la metà
+        assert r["combinazioni"] == 10000 and abs(r["sr_minimo"] - 1.36) < 0.005, r
+        assert not r["ok"] and "richiedono sr_obiettivo >= 1.36" in r["errori"][0], r["errori"]
+        assert esperimento.controlla(_scrivi(tmp, regola=REGOLA, griglia=grande, sr_obiettivo=1.4))["ok"]
+        v = esperimento.controlla(_scrivi(tmp, regola=REGOLA, griglia=grande, sr_obiettivo=1.4, modo="verticale"))
+        assert not v["ok"] and v["sr_minimo"] > 1.4, v         # in verticale il budget è la metà
 
 
 if __name__ == "__main__":

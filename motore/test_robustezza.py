@@ -57,13 +57,13 @@ def test_robustezza_coerente():
         # regimi: i due gruppi coprono tutti i trade
         rg = rob["regimi"]
         assert rg["sopra"]["n"] + rg["sotto"]["n"] == b["n"] and rg["sopra"]["n"] > 100 and rg["sotto"]["n"] > 100
-        # finestre di 12 mesi: la prima coincide con il 2011, passo di 3 mesi
+        # finestre di 12 mesi: la prima coincide con il 2014, passo di 3 mesi
         fin = rob["finestre_12_mesi"]
-        assert fin[0]["da"] == "2011-01" and fin[0]["a"] == "2011-12" and fin[1]["da"] == "2011-04", fin[:2]
-        assert fin[-1]["a"] == "2023-12" and len(fin) == 4 * 13 - 3, (fin[-1], len(fin))
-        assert abs(fin[0]["profitto"] - b["per_anno"]["2011"]) < 0.01, (fin[0], b["per_anno"])
+        assert fin[0]["da"] == "2014-01" and fin[0]["a"] == "2014-12" and fin[1]["da"] == "2014-04", fin[:2]
+        assert fin[-1]["a"] == "2023-12" and len(fin) == 4 * 10 - 3, (fin[-1], len(fin))
+        assert abs(fin[0]["profitto"] - b["per_anno"]["2014"]) < 0.01, (fin[0], b["per_anno"])
         # calendario: i mesi dell'anno sommano al profitto dell'anno
-        assert abs(sum(rob["calendario"]["2011"].values()) - b["per_anno"]["2011"]) < 0.01
+        assert abs(sum(rob["calendario"]["2014"].values()) - b["per_anno"]["2014"]) < 0.01
         assert rob["vicini"] is None          # senza famiglia non c'è registro da leggere
     # un prodotto senza costi né gemelli: i campi in euro e il gemello sono None
     with _ambiente():

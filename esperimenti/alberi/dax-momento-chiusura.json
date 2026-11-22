@@ -1,0 +1,46 @@
+{
+ "tipo": "albero",
+ "nome": "dax-momento-chiusura",
+ "ipotesi": "Se alle 17:00 il DAX è salito rispetto alla chiusura di ieri, continua a salire fino alla chiusura (o oltre); i filtri cercano i giorni in cui le coperture del gamma sono più forti.",
+ "meccanismo": "Chi ha venduto opzioni copre il gamma comprando nella direzione del movimento della giornata, soprattutto verso la chiusura; più grande il movimento e più alta la volatilità, più grande la copertura.",
+ "fonte": "studio accademico: Gao, Han, Li, Zhou 2018 (JFE); Baltussen, Da, Lammers, Martens 2021 (JFE, 60 futures compreso il DAX, effetto più forte nei giorni di gamma negativo)",
+ "prodotto": "FDAX",
+ "gemello": "FESX",
+ "barre": 5,
+ "budget": 200,
+ "prove_pregresse": 24,
+ "max_condizioni": 2,
+ "rami_per_livello": 3,
+ "foglie_per_radice": 3,
+ "radici": [
+  {"nome": "c01 giorno in rialzo, 17:00 → 21:55", "descrizione": "dal primo esperimento: 4,4 € a trade, 129 trade l'anno",
+   "regola": {"lato": 1, "da": "17:00", "a": "17:00", "cond": [["dal_close_ieri", ">=", 0]], "uscita": {"ora": "21:55"}, "max_al_giorno": 1}},
+  {"nome": "c03 rialzo di almeno 0,25 escursioni, 17:00 → 21:55", "descrizione": "dal primo esperimento",
+   "regola": {"lato": 1, "da": "17:00", "a": "17:00", "cond": [["dal_close_ieri", ">=", 0.25]], "uscita": {"ora": "21:55"}, "max_al_giorno": 1}},
+  {"nome": "c02 giorno in rialzo, 17:00 → 17:30", "descrizione": "dal primo esperimento",
+   "regola": {"lato": 1, "da": "17:00", "a": "17:00", "cond": [["dal_close_ieri", ">=", 0]], "uscita": {"ora": "17:30"}, "max_al_giorno": 1}}
+ ],
+ "ingressi": [
+  {"nome": "giornata ampia", "grandezza": "escursione_oggi", "op": ">=", "soglie": [0.6, 0.8, 1.0],
+   "meccanismo": "le coperture del gamma muovono di più quando il mercato si è già mosso molto, e il guadagno in euro scala con l'escursione",
+   "direzione": "più ampia la giornata, più forte la continuazione"},
+  {"nome": "volatilità del periodo alta", "grandezza": "vol_relativa", "op": ">=", "soglie": [1.0, 1.2],
+   "meccanismo": "al posto del VIX (che una strategia ProRealTime sul DAX non può leggere): escursione media di 20 giorni sopra quella di 100; Baltussen et al. trovano l'effetto più forte nei periodi agitati",
+   "direzione": "volatilità alta aiuta"},
+  {"nome": "conferma americana", "grandezza": "dal_1530", "op": ">=", "soglie": [0, 0.1, 0.2],
+   "meccanismo": "se il DAX sale anche dall'apertura di Wall Street il movimento è globale e i flussi continuano; al posto dell'S&P, che ProRealTime non può leggere nella stessa strategia",
+   "direzione": "rialzo dalle 15:30 aiuta"},
+  {"nome": "scadenza delle opzioni", "grandezza": "terzo_venerdi", "op": ">=", "soglie": [1],
+   "meccanismo": "nel giorno di scadenza i flussi di copertura sono massimi (le opzioni sul DAX scadono alle 13:00, quindi l'effetto dopo le 17:00 è incerto)",
+   "direzione": "scadenza aiuta"},
+  {"nome": "fine mese", "grandezza": "giorno_mese", "op": ">=", "soglie": [24, 26],
+   "meccanismo": "ribilanciamenti di fine periodo dei fondi e flussi documentati a cavallo del mese",
+   "direzione": "fine mese aiuta"}
+ ],
+ "uscite": [
+  {"nome": "uscita alle 17:30", "uscita": {"ora": "17:30"}},
+  {"nome": "uscita alle 21:55", "uscita": {"ora": "21:55"}},
+  {"nome": "uscita domattina alle 09:30", "uscita": {"ora": "09:30"}},
+  {"nome": "stop 0,5 escursioni", "stop": 0.5}
+ ]
+}
