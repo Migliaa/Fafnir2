@@ -4,7 +4,7 @@
 // ------------------------------------------------------------------ utilità
 const app = document.getElementById('app');
 let giro = 0;
-const vedi = (mio, ...nodi) => { if (mio === giro) app.replaceChildren(...nodi); };
+const vedi = (mio, ...nodi) => { if (mio === giro) app.replaceChildren(...nodi.filter(n => n != null && n !== false)); };
 function h(tag, attrs, ...kids) {
   const e = document.createElement(tag);
   for (const [k, v] of Object.entries(attrs || {})) {
@@ -40,7 +40,7 @@ function memo(chiave, valore) {         // preferenze di vista: se il browser no
 
 const GRUPPI = [['caso', 'Caso o vantaggio'], ['costi', 'Costi e fattibilità'], ['regolarita', 'Regolarità'],
   ['robustezza', 'Robustezza'], ['rischio', 'Rischio'], ['portafoglio', 'Portafoglio']];
-const ESITI = { candidato: 'Candidato', da_rivedere: 'Da rivedere', scartato: 'Scartato', non_giudicato: 'Non giudicato' };
+const ESITI = { candidato: 'Candidato', scartato: 'Scartato', non_giudicato: 'Non giudicato' };
 const STATI = ['da guardare', 'da approfondire', 'in verifica', 'live', 'scartato'];
 const GRAVITA = { rosso: 0, giallo: 1, grigio: 2, verde: 3, info: 4 };
 const badge = (esito, testo) => h('span', { class: 'badge ' + (esito || 'non_giudicato') }, testo || ESITI[esito] || ESITI.non_giudicato);
@@ -152,116 +152,201 @@ function md(src) {
   const d = h('div', { class: 'testo-md' }); d.innerHTML = out.join(''); return d;
 }
 
+// ------------------------------------------------------------------ curva a tre fasce
+const FASCE = { indietro: ['Holdout all\'indietro', 'var(--f-ind)'], scoperta: ['In-sample', 'var(--f-in)'], avanti: ['Fuori campione', 'var(--f-out)'] };
+const mese = d => { const [a, m] = d.split('-'); return ['gen', 'feb', 'mar', 'apr', 'mag', 'giu', 'lug', 'ago', 'set', 'ott', 'nov', 'dic'][+m - 1] + ' ' + a; };
+/* Curva netta quasi quadrata (1:1,2) con una fascia di colore per periodo e il drawdown sotto in piccolo.
+   c: {date, cum, dd, segmenti: [[periodo, da, a]]}. */
+function curvaQuadrata(c, fmt) {
+  const W = 520, H = 440, HD = 96, m = { l: 62, r: 10, t: 10, b: 40 }, n = c.cum.length;
+  const X = i => m.l + (W - m.l - m.r) * i / (n - 1);
+  const sc = bellaScala(Math.min(...c.cum, 0), Math.max(...c.cum, 0), 5), Y = v => m.t + (H - m.t - m.b) * (1 - (v - sc.a) / (sc.b - sc.a));
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'quadrata', role: 'img', 'aria-label': 'Curva netta cumulata' });
+  const assi = sv('g', { class: 'assi' });
+  c.segmenti.forEach(([p, i0, i1]) => svg.append(sv('rect', { x: X(i0), y: m.t, width: Math.max(1, X(i1) - X(i0)), height: H - m.t - m.b, style: `fill:${FASCE[p][1]};opacity:.13` })));
+  sc.t.forEach(v => assi.append(sv('line', { x1: m.l, x2: W - m.r, y1: Y(v), y2: Y(v) }), sv('text', { x: m.l - 6, y: Y(v) + 4, 'text-anchor': 'end' }, fmt(v))));
+  svg.append(assi);
+  c.segmenti.forEach(([p, i0, i1]) => {
+    const j0 = Math.max(0, i0 - 1);          // il tratto parte dal punto precedente, così le fasce si toccano senza buchi
+    svg.append(sv('polyline', { points: c.cum.slice(j0, i1 + 1).map((v, k) => `${X(j0 + k)},${Y(v)}`).join(' '), style: `fill:none;stroke:${FASCE[p][1]};stroke-width:1.8` }));
+    const xm = (X(i0) + X(i1)) / 2, w = X(i1) - X(i0), nome = w > 110 ? FASCE[p][0] : (w > 38 ? FASCE[p][2] : '');
+    if (nome) svg.append(sv('text', { x: xm, y: H - 22, 'text-anchor': 'middle', style: `fill:${FASCE[p][1]};font-size:12px;font-weight:600` }, nome));
+    svg.append(sv('text', { x: xm, y: H - 7, 'text-anchor': 'middle', style: 'fill:var(--muto);font-size:10.5px' }, w > 130 ? `${mese(c.date[i0])} – ${mese(c.date[i1])}` : `${c.date[i0].slice(0, 4)}–${c.date[i1].slice(0, 4)}`));
+  });
+  const riga = sv('line', { y1: m.t, y2: H - m.b, style: 'stroke:var(--muto);stroke-width:1;display:none' }), tip = h('div', { class: 'tip' });
+  const area = sv('rect', { x: m.l, y: m.t, width: W - m.l - m.r, height: H - m.t - m.b, style: 'fill:transparent' });
+  area.addEventListener('pointermove', ev => {
+    const r = svg.getBoundingClientRect(), x = (ev.clientX - r.left) * W / r.width, i = Math.max(0, Math.min(n - 1, Math.round((x - m.l) / (W - m.l - m.r) * (n - 1))));
+    riga.setAttribute('x1', X(i)); riga.setAttribute('x2', X(i)); riga.style.display = '';
+    tip.textContent = `${c.date[i]}: ${fmt(c.cum[i])}`; tip.style.display = 'block'; tip.style.left = Math.min(Math.max(8, X(i) * r.width / W + 10), r.width - 150) + 'px'; tip.style.top = '8px';
+  });
+  area.addEventListener('pointerleave', () => { riga.style.display = 'none'; tip.style.display = 'none'; });
+  svg.append(riga, area);
+  // drawdown: stessa scala orizzontale, in piccolo
+  const dsv = sv('svg', { viewBox: `0 0 ${W} ${HD}`, class: 'quadrata', role: 'img', 'aria-label': 'Drawdown' });
+  const mn = Math.min(...c.dd, -1e-9), YD = v => 14 + (HD - 22) * (v / mn);
+  c.segmenti.forEach(([p, i0, i1]) => dsv.append(sv('rect', { x: X(i0), y: 0, width: Math.max(1, X(i1) - X(i0)), height: HD - 8, style: `fill:${FASCE[p][1]};opacity:.13` })));
+  dsv.append(sv('polygon', { points: `${X(0)},14 ` + c.dd.map((v, i) => `${X(i)},${YD(v)}`).join(' ') + ` ${X(n - 1)},14`, style: 'fill:var(--rosso);opacity:.4' }),
+    sv('text', { x: m.l - 6, y: 12, 'text-anchor': 'end', style: 'fill:var(--muto);font-size:11px' }, '0'),
+    sv('text', { x: m.l - 6, y: YD(mn) + 4, 'text-anchor': 'end', style: 'fill:var(--muto);font-size:11px' }, fmt(mn)),
+    sv('text', { x: m.l + 4, y: HD - 12, style: 'fill:var(--muto);font-size:11px' }, 'Drawdown'));
+  return h('div', { class: 'grafico curva-q' }, svg, tip, dsv);
+}
+/* Grafico piccolo e quadrato della riga dell'elenco: stessa curva, un colore per periodo. */
+function miniGrafico(mini) {
+  const S = 56, svg = sv('svg', { viewBox: `0 0 ${S} ${S}`, class: 'mini', width: S, height: S });
+  if (!mini || !mini.y || mini.y.length < 2) return svg;
+  const y = mini.y, lo = Math.min(...y, 0), hi = Math.max(...y, 0), n = y.length;
+  const X = i => 2 + (S - 4) * i / (n - 1), Y = v => 2 + (S - 4) * (1 - (v - lo) / ((hi - lo) || 1));
+  svg.append(sv('line', { x1: 2, x2: S - 2, y1: Y(0), y2: Y(0), style: 'stroke:var(--bordo);stroke-width:1' }));
+  (mini.segmenti || [['scoperta', 0, n - 1]]).forEach(([p, i0, i1]) => {
+    const j0 = Math.max(0, i0 - 1);
+    svg.append(sv('polyline', { points: y.slice(j0, i1 + 1).map((v, k) => `${X(j0 + k)},${Y(v)}`).join(' '), style: `fill:none;stroke:${(FASCE[p] || FASCE.scoperta)[1]};stroke-width:1.5` }));
+  });
+  return svg;
+}
+const legendaFasce = c => h('div', { class: 'legenda' }, c.segmenti.map(([p, i0, i1]) => h('span', {}, h('i', { style: `background:${FASCE[p][1]}` }),
+  `${FASCE[p][0]} ${c.date[i0]} → ${c.date[i1]}`)));
+
 // ------------------------------------------------------------------ pagina Sistemi
-const filtri = { esperimento: '', prodotto: '', lato: '', barre: '', esito: '', decisione_stato: '', q: '' };
-let ordine = { k: 'sharpe', dir: -1 };
-const RANGO_ESITO = { candidato: 0, da_rivedere: 1, scartato: 2 };
+const filtri = { esperimento: '', prodotto: '', lato: '', q: '', scartati: false };
+let ordine = { k: 'guadagno', dir: -1 };
+const soglia = (S, ore) => { for (const [fino, e] of (S.guadagno_euro || [])) if (fino == null || ore <= fino) return e; return null; };
+const colore = ok => ok == null ? '' : ok ? 'pos' : 'neg';
 const COLONNE = [
+  { k: 'mini', t: '', v: null },
   { k: 'nome', t: 'Nome', v: r => r.nome },
   { k: 'prodotto', t: 'Prodotto', v: r => r.prodotto },
   { k: 'lato', t: 'Lato', v: r => r.lato },
-  { k: 'barre', t: 'Barre', title: 'Durata delle barre in minuti', v: r => r.barre },
-  { k: 'esito', t: 'Esito', v: r => RANGO_ESITO[r.esito] ?? 9 },
-  { k: 'gruppi', t: 'Gruppi', title: 'Caso o vantaggio, costi, regolarità, robustezza, rischio, portafoglio', v: null },
-  { k: 'n', t: 'Trade', v: r => r.n },
-  { k: 'media', t: 'Media', title: 'Profitto netto medio per trade, in escursioni medie giornaliere', v: r => r.media },
-  { k: 'pf', t: 'PF', title: 'Profit factor: somma delle vincite diviso somma delle perdite', v: r => r.pf },
-  { k: 'sharpe', t: 'Sharpe', title: 'Rendimento medio giornaliero diviso la sua variabilità, annualizzato', v: r => r.sharpe },
-  { k: 'dsr', t: 'DSR', title: 'Deflated Sharpe ratio: probabilità che lo Sharpe sia reale dopo aver contato tutte le prove fatte', v: r => r.dsr },
-  { k: 'anni_positivi', t: 'Anni +', title: 'Quota di anni chiusi in profitto', v: r => r.anni_positivi },
-  { k: 'media_2019_2023', t: '2019-2023', title: 'Media per trade, in escursioni, negli ultimi cinque anni della scoperta', v: r => r.media_2019_2023 },
-  { k: 'netto_euro', t: 'Netto € 1 CFD', title: 'Profitto netto 2011-2023 con 1 CFD IG per punto, in euro', v: r => r.netto_euro },
-  { k: 'decisione_stato', t: 'Stato', v: r => STATI.indexOf(r.decisione_stato) },
+  { k: 'guadagno', t: '€ a trade', title: 'Guadagno medio netto per trade con 1 CFD IG', v: r => (r.misure || {}).guadagno_medio },
+  { k: 'udd', t: 'Utile / DD', title: 'Utile diviso drawdown massimo, in euro di 1 CFD', v: r => (r.misure || {}).utile_su_dd },
+  { k: 'costi', t: 'Lordo / costi', title: 'Guadagno lordo diviso spread e costo notturno', v: r => (r.misure || {}).rapporto_costi },
+  { k: 'ore', t: 'Ore in mercato', title: 'Durata media di un trade, in ore', v: r => (r.misure || {}).ore_medie },
+  { k: 'r2', t: 'R²', title: 'Quanto la curva netta somiglia a una retta', v: r => (r.misure || {}).r2 },
+  { k: 'tanno', t: 'Trade / anno', v: r => (r.misure || {}).trade_anno },
+  { k: 'oos', t: 'Fuori campione €/trade', title: 'Guadagno medio a trade nella prova finale', v: r => (r.fuori_campione || {}).guadagno_medio },
+  { k: 'esito', t: 'Esito', v: r => r.esito === 'candidato' ? 0 : 1 },
 ];
 async function paginaSistemi() {
   const mio = giro;
-  const righe = await api('/sistemi');
+  const [righe, esps] = await Promise.all([api('/sistemi'), api('/esperimenti')]);
+  const S = (esps[0] || {}).soglie || {};
   const valori = k => [...new Set(righe.map(r => r[k]))].sort();
-  const conta = f => righe.filter(f).length;
-  const riquadri = [['Candidati', conta(r => r.esito === 'candidato')], ['Da rivedere', conta(r => r.esito === 'da_rivedere')],
-    ['Scartati', conta(r => r.esito === 'scartato')], ['In verifica', conta(r => r.decisione_stato === 'in verifica')],
-    ['Live', conta(r => r.decisione_stato === 'live')]];
+  const nCand = righe.filter(r => r.esito === 'candidato').length, nScart = righe.length - nCand;
   const corpo = h('tbody'), conto = h('span', { class: 'muto' });
   function sel(k, et, opzioni) {
     return h('select', { onchange: ev => { filtri[k] = ev.target.value; ridisegna(); }, title: et },
       h('option', { value: '' }, et + ': tutti'), opzioni.map(([v, t]) => h('option', { value: v, selected: String(filtri[k]) === String(v) }, t)));
   }
   const q = h('input', { type: 'search', placeholder: 'Cerca per nome', value: filtri.q, oninput: ev => { filtri.q = ev.target.value; ridisegna(); } });
-  const intest = h('tr', {}, COLONNE.map(c => h('th', { class: c.v ? 'ord' : '', title: c.title, onclick: c.v ? () => {
-    ordine = { k: c.k, dir: ordine.k === c.k ? -ordine.dir : (c.k === 'nome' || c.k === 'prodotto' ? 1 : -1) }; ridisegna(); } : null },
-    c.t + (ordine.k === c.k ? (ordine.dir > 0 ? ' ▲' : ' ▼') : ''))));
+  const interruttore = h('label', { class: 'interr' }, h('input', { type: 'checkbox', checked: filtri.scartati, onchange: ev => { filtri.scartati = ev.target.checked; ridisegna(); } }), ` Mostra anche gli scartati (${nScart})`);
+  const intest = h('tr');
   function ridisegna() {
     const col = COLONNE.find(c => c.k === ordine.k);
-    const sel_ = righe.filter(r => (!filtri.esperimento || r.esperimento === filtri.esperimento) && (!filtri.prodotto || r.prodotto === filtri.prodotto) &&
-      (!filtri.lato || r.lato === filtri.lato) && (!filtri.barre || String(r.barre) === filtri.barre) && (!filtri.esito || (r.esito || 'non_giudicato') === filtri.esito) &&
-      (!filtri.decisione_stato || r.decisione_stato === filtri.decisione_stato) &&
-      (!filtri.q || (r.nome + ' ' + r.etichetta).toLowerCase().includes(filtri.q.toLowerCase())));
+    const sel_ = righe.filter(r => (filtri.scartati || r.esito === 'candidato') && (!filtri.esperimento || r.esperimento === filtri.esperimento) && (!filtri.prodotto || r.prodotto === filtri.prodotto) &&
+      (!filtri.lato || r.lato === filtri.lato) && (!filtri.q || (r.nome + ' ' + r.etichetta).toLowerCase().includes(filtri.q.toLowerCase())));
     if (col && col.v) sel_.sort((a, b) => { const x = col.v(a), y = col.v(b); return (x == null) - (y == null) || (x > y ? 1 : x < y ? -1 : 0) * ordine.dir; });
     conto.textContent = `${sel_.length} di ${righe.length}`;
     intest.replaceChildren(...COLONNE.map(c => h('th', { class: c.v ? 'ord' : '', title: c.title, onclick: c.v ? () => {
       ordine = { k: c.k, dir: ordine.k === c.k ? -ordine.dir : (c.k === 'nome' || c.k === 'prodotto' ? 1 : -1) }; ridisegna(); } : null },
       c.t + (ordine.k === c.k ? (ordine.dir > 0 ? ' ▲' : ' ▼') : ''))));
-    corpo.replaceChildren(...sel_.map(r => h('tr', { class: 'clic', onclick: () => { location.hash = `#/sistemi/${r.esperimento}/${r.id}`; } },
-      h('td', {}, r.nome, h('div', { class: 'muto', style: 'font-size:11px' }, r.etichetta)),
-      h('td', {}, r.prodotto), h('td', {}, r.lato), h('td', {}, r.barre),
-      h('td', {}, badge(r.esito)), h('td', {}, pallini(r.gruppi)),
-      h('td', {}, r.n), h('td', { class: segno(r.media) }, nf(r.media, 3)), h('td', {}, nf(r.pf)), h('td', {}, nf(r.sharpe)),
-      h('td', {}, nf(r.dsr, 3)), h('td', {}, pc(r.anni_positivi)), h('td', { class: segno(r.media_2019_2023) }, nf(r.media_2019_2023, 3)),
-      h('td', { class: segno(r.netto_euro) }, eur(r.netto_euro)), h('td', {}, r.decisione_stato))));
+    corpo.replaceChildren(...sel_.map(r => {
+      const m = r.misure || {}, fc = r.fuori_campione, sg = m.ore_medie == null ? null : soglia(S, m.ore_medie);
+      return h('tr', { class: 'clic', onclick: () => { location.hash = `#/sistemi/${r.esperimento}/${r.id}`; } },
+        h('td', { class: 'mini-td' }, miniGrafico(r.mini)),
+        h('td', {}, r.nome, h('div', { class: 'muto', style: 'font-size:11px' }, r.etichetta), r.esito === 'scartato' && r.motivo ? h('div', { class: 'motivo' }, r.motivo) : null),
+        h('td', {}, r.prodotto), h('td', {}, r.lato),
+        h('td', { class: colore(sg == null || m.guadagno_medio == null ? null : m.guadagno_medio >= sg) }, m.guadagno_medio == null ? '–' : nf(m.guadagno_medio, 1) + ' €'),
+        h('td', {}, nf(m.utile_su_dd, 1)), h('td', {}, nf(m.rapporto_costi, 1)), h('td', {}, nf(m.ore_medie, 1)),
+        h('td', { class: colore(m.r2 == null || S.r2 == null ? null : m.r2 >= S.r2) }, nf(m.r2)),
+        h('td', { class: colore(m.trade_anno == null || S.trade_anno == null ? null : m.trade_anno >= S.trade_anno) }, nf(m.trade_anno, 0)),
+        h('td', { class: fc ? colore(fc.guadagno_medio >= 0) : 'muto' }, fc ? (fc.guadagno_medio == null ? 'nessun trade' : nf(fc.guadagno_medio, 1) + ' €') : '–'),
+        h('td', {}, badge(r.esito)));
+    }));
   }
+  const vuoto = !righe.length ? 'Nessun sistema: lancia un esperimento e poi `esperimento arricchisci <nome>`.' :
+    (!nCand ? `Nessun candidato: tutti i ${righe.length} sistemi sono stati scartati. Attiva l'interruttore per vederli con il motivo.` : null);
   vedi(mio, h('h1', {}, 'Sistemi'),
-    h('div', { class: 'riquadri' }, riquadri.map(([t, n]) => h('div', { class: 'riquadro' }, h('div', { class: 'n' }, n), h('div', { class: 'et' }, t)))),
     h('div', { class: 'filtri' }, sel('esperimento', 'Esperimento', valori('esperimento').map(v => [v, v])), sel('prodotto', 'Prodotto', valori('prodotto').map(v => [v, v])),
-      sel('lato', 'Lato', [['long', 'long'], ['short', 'short']]), sel('barre', 'Barre', valori('barre').map(v => [v, v + ' min'])),
-      sel('esito', 'Esito', Object.entries(ESITI)), sel('decisione_stato', 'Stato', STATI.map(s => [s, s])), q, conto),
-    righe.length ? h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, intest), corpo)) :
-      h('p', { class: 'muto' }, 'Nessun candidato: lancia un esperimento e poi `esperimento arricchisci <nome>`.'));
+      sel('lato', 'Lato', [['long', 'long'], ['short', 'short']]), q, interruttore, conto),
+    vuoto ? h('p', { class: 'muto' }, vuoto) : null,
+    righe.length ? h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, intest), corpo)) : null);
   ridisegna();
 }
 
 // ------------------------------------------------------------------ scheda
-const TAB = [['riepilogo', 'Riepilogo'], ['curva', 'Curva'], ['giudizio', 'Giudizio'], ['robustezza', 'Robustezza'],
-  ['calendario', 'Calendario'], ['trade', 'Trade'], ['codice', 'Codice'], ['decisione', 'Decisione']];
-async function paginaScheda(esp, id, tab) {
+const sezione = (titolo, costruisci, nota) => {
+  let fatto = false;
+  const corpo = h('div', { class: 'sez-corpo' });
+  const d = h('details', { class: 'sezione' }, h('summary', {}, titolo, nota ? h('span', { class: 'muto' }, ' · ' + nota) : null), corpo);
+  d.addEventListener('toggle', () => { if (d.open && !fatto) { fatto = true; corpo.append(costruisci()); } });
+  return d;
+};
+const voceF = (g, nome) => [...(g.filtri || []), ...(g.statistico || [])].find(v => v.nome === nome);
+const colEsito = e => e === 'verde' || e === 'rosso' || e === 'giallo' ? e : '';
+function grande(etichetta, valore, sogliaTesto, esito, sotto, title) {
+  return h('div', { class: 'num6 ' + colEsito(esito), title }, h('div', { class: 'et' }, etichetta), h('div', { class: 'gr' }, valore),
+    h('div', { class: 'so' }, sogliaTesto), sotto ? h('div', { class: 'su' }, sotto) : null);
+}
+async function paginaScheda(esp, id) {
   const mio = giro;
-  tab = tab || 'riepilogo';
   const d = await api(`/sistemi/${esp}/${id}`);
-  const g = (d.scheda.giudizio || {}), ih = d.intestazione;
+  const sc = d.scheda, g = sc.giudizio || {}, ih = d.intestazione, m = sc.misure || {}, S = d.soglie || {}, pf = sc.prova_finale;
   const testata = h('div', { class: 'testata' },
     h('div', { class: 'titolo' }, h('a', { href: '#/sistemi' }, '← Sistemi'), h('h1', { style: 'margin:0' }, d.nome),
-      badge(g.esito, g.esito ? ESITI[g.esito] : 'Non giudicato'), h('span', { class: 'muto' }, `${d.scheda.prodotto} · ${d.lato} · barre da ${ih.barre} min`)),
-    h('p', { class: 'muto', style: 'margin:6px 0 0' }, d.riga.parametri ? Object.entries(d.riga.parametri).map(([k, v]) => `${k} = ${v}`).join(' · ') : ''),
-    h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', { style: 'margin:4px 0 0' }, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
-    h('p', { class: 'muto', style: 'margin:4px 0 0' }, h('a', { href: `#/esperimenti/${esp}` }, 'Esperimento'), ` · fonte: ${ih.fonte}`));
-  const gruppi = h('div', { class: 'gruppi' }, GRUPPI.map(([k, n]) => {
-    const x = (g.gruppi || {})[k] || { esito: 'grigio', sintesi: 'giudizio non calcolato (esegui arricchisci)' };
-    return h('div', { class: 'gruppo ' + x.esito, title: n + (x.cancello ? ' (cancello)' : '') }, h('div', { class: 'nome' }, n, ' ', badge(x.esito, x.esito)), h('div', { class: 'sintesi' }, x.sintesi));
-  }));
-  const nav = h('div', { class: 'schede' }, TAB.map(([k, t]) => h('a', { href: `#/sistemi/${esp}/${id}/${k}`, class: k === tab ? 'attiva' : '' }, t)));
-  const f = { riepilogo, curva, giudizio, robustezza, calendario, trade, codice, decisione }[tab] || riepilogo;
-  vedi(mio, testata, gruppi, nav, f(d));
+      badge(g.esito, g.esito ? ESITI[g.esito] : 'Non giudicato'), h('span', { class: 'muto' }, `${sc.prodotto} · ${d.lato} · barre da ${ih.barre} min`)),
+    h('p', { class: 'muto', style: 'margin:6px 0 0' }, d.riga.parametri ? Object.entries(d.riga.parametri).map(([k, v]) => `${k} = ${v}`).join(' · ') : ''));
+  // curva: tutto il tempo se ci sono i dati in euro, altrimenti la sola scoperta in escursioni
+  let cv = d.completa, fmt = v => nf(v, 0) + ' €';
+  if (!cv && d.curva) { const e = d.curva.esc; cv = { date: d.curva.date, cum: e.cum, dd: e.dd, segmenti: [['scoperta', 0, e.cum.length - 1]] }; fmt = v => nf(v, 1); }
+  const sinistra = h('div', { class: 'col-curva' }, cv ? [h('div', { class: 'titolo-fig' }, d.completa ? 'Profitto netto cumulato, 1 CFD IG' : 'Profitto netto cumulato, escursioni medie'),
+    curvaQuadrata(cv, fmt), legendaFasce(cv)] : h('p', { class: 'muto' }, 'Curva giornaliera non disponibile.'));
+  // sei numeri
+  const fGm = voceF(g, 'Guadagno medio per trade'), fTa = voceF(g, 'Trade l\'anno'), fR2 = voceF(g, 'Regolarità della curva (R²)');
+  const rc = m.rapporto_costi, esitoCosti = rc == null ? null : rc >= S.rapporto_costi ? 'verde' : rc >= 2 ? 'giallo' : 'rosso';
+  const sgGm = m.ore_medie == null ? null : soglia(S, m.ore_medie);
+  const destra = h('div', { class: 'col-num' },
+    h('div', { class: 'sei' },
+      grande('Guadagno medio a trade', m.guadagno_medio == null ? '–' : nf(m.guadagno_medio, 1) + ' €', sgGm == null ? 'soglia: dipende dalla durata' : `soglia ${sgGm} € (trade di ${nf(m.ore_medie, 1)} ore)`, fGm && fGm.esito, '1 CFD IG, al netto di spread e notte', 'Guadagno medio netto per trade con 1 CFD IG'),
+      grande('Utile / drawdown', nf(m.utile_su_dd, 1), 'nessuna soglia', null, m.utile == null ? '' : `${eur(m.utile)} / ${eur(m.drawdown)}`, 'Utile totale diviso drawdown massimo'),
+      grande('Lordo / costi', nf(rc, 1), `riferimento ${S.rapporto_costi || 3}`, esitoCosti, m.costo_medio == null ? '' : `lordo ${nf(m.lordo_medio, 1)} € · costi ${nf(m.costo_medio, 1)} € a trade`, 'Quante volte il guadagno lordo copre spread e costo notturno'),
+      grande('Tempo in mercato', m.ore_medie == null ? '–' : nf(m.ore_medie, 1) + ' ore', 'nessuna soglia', null, m.in_mercato == null ? 'ore medie per trade' : `ore medie per trade · ${pc(m.in_mercato)} del tempo`, 'Ogni posizione aperta blocca margine'),
+      grande('Regolarità (R²)', nf(m.r2), `soglia ${S.r2 == null ? '–' : nf(S.r2)}`, fR2 && fR2.esito, m.anni_positivi == null ? '' : `anni positivi ${pc(m.anni_positivi)} (soglia ${pc(S.anni_positivi)})`, 'Quanto la curva netta somiglia a una retta'),
+      grande('Trade l\'anno', nf(m.trade_anno, 0), `soglia ${S.trade_anno == null ? '–' : nf(S.trade_anno, 0)}`, fTa && fTa.esito, m.n == null ? '' : `${m.n} trade in 13 anni`, 'Numero medio di trade in un anno')),
+    h('div', { class: 'fuori' }, h('strong', {}, 'Fuori campione '), pf && pf.avanti ? [`(${pf.avanti.da} → ${pf.avanti.a}): ${pf.avanti.n} trade · utile `, h('span', { class: segno(pf.avanti.utile) }, eur(pf.avanti.utile)),
+      ` · guadagno medio ${nf(pf.avanti.guadagno_medio, 1)} € a trade` + (m.guadagno_medio ? ` (${pc(pf.avanti.guadagno_medio / m.guadagno_medio)} di quello in-sample)` : '') + (pf.gia_usata ? ' · prova già usata' : '')] :
+      pf ? 'nessun trade nel periodo di prova.' : (g.passa_scoperta === false ? 'non eseguita: il sistema non ha passato i filtri sulla scoperta.' : 'non eseguita.')));
+  const ia = d.commento_ia;
+  const esito = h('div', { class: 'esito-riga ' + (g.esito || '') }, badge(g.esito, g.esito ? ESITI[g.esito] : 'Non giudicato'),
+    h('span', {}, g.motivo || 'Giudizio non calcolato: esegui `python -m motore.cli esperimento arricchisci <nome>`.'));
+  const iaBox = h('div', { class: 'ia' }, h('div', { class: 'et' }, 'Commento dell\'IA, non deterministico'),
+    ia ? [h('div', { class: 'muto', style: 'margin-bottom:6px' }, `Scritto il ${ia.data || 'data non indicata'} · modello ${ia.modello || 'non indicato'}`), md(ia.testo)] : h('p', { class: 'muto' }, 'Non ancora scritto.'));
+  vedi(mio, testata, h('div', { class: 'prima-vista' }, sinistra, destra), esito, iaBox,
+    sezione('Ipotesi e fonte', () => h('div', {}, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
+      h('p', { class: 'muto' }, h('a', { href: `#/esperimenti/${esp}` }, 'Esperimento'), ` · fonte: ${ih.fonte}`))),
+    sezione('Altri numeri', () => riepilogo(d)),
+    sezione('Curva, Monte Carlo e anni', () => curva(d)),
+    sezione('Giudizio: filtri, cancello e gruppi', () => giudizio(d)),
+    sezione('Robustezza', () => robustezza(d)),
+    sezione('Calendario', () => calendario(d)),
+    sezione('Trade', () => trade(d)),
+    sezione('Codice ProRealCode', () => codice(d)),
+    sezione('Decisione e verifica su ProRealTime', () => decisione(d), d.decisione.stato));
 }
 const num = (e, v, title, cl) => h('div', { class: 'numero', title }, h('div', { class: 'v ' + (cl || '') }, v), h('div', { class: 'e' }, e));
 function riepilogo(d) {
   const s = d.scheda, b = s.backtest || {}, sc = s.scheda || {}, r = s.robustezza || {}, e = r.euro || {};
-  const mc = (sc['6_montecarlo'] || {}), reg = sc['3_regolarita'] || {};
-  const ia = d.commento_ia;
-  return h('div', {},
-    h('div', { class: 'numeri' },
-      num('Trade', b.n), num('Media per trade (esc.)', nf(b.media_esc, 3), 'Netto dei costi IG, in escursioni medie giornaliere', segno(b.media_esc)),
-      num('Media lorda (esc.)', nf(b.lorda_esc, 3), 'Prima dei costi'), num('Profit factor', nf(b.pf)),
-      num('Sharpe', nf(b.sharpe)), num('DSR', nf((sc['1_sharpe'] || {}).dsr, 3), 'Probabilità che lo Sharpe sia reale dopo tutte le prove'),
-      num('PBO', nf((sc['2_pbo'] || {}).pbo, 2), 'Probabilità di sovradattamento della famiglia di prove'),
-      num('CPCV mediana', nf((sc['2_cpcv'] || {}).mediana, 2), 'Sharpe mediano sulle combinazioni di anni'),
-      num('CPCV 10° percentile', nf((sc['2_cpcv'] || {}).p10, 2)),
-      num('Anni positivi', pc(b.anni_positivi)), num('2019-2023 (esc.)', nf(b.media_recente_esc, 3), '', segno(b.media_recente_esc)),
-      num('R²', nf(reg.r2, 2), 'Quanto la curva somiglia a una retta'), num('Drawdown max (esc.)', nf(b.dd_max_esc, 1)),
-      num('Tempo in mercato', pc(b.in_mercato)),
-      num('Netto € 1 CFD', eur(e.profitto), 'Profitto 2011-2023 per 1 CFD IG', segno(e.profitto)), num('Drawdown € 1 CFD', eur(e.drawdown)),
-      num('Trade medio €', e.trade_medio == null ? '–' : nf(e.trade_medio, 1) + ' €')),
-    ia ? h('div', { class: 'ia' }, h('div', { class: 'et' }, 'Commento dell\'IA, non deterministico'),
-      h('div', { class: 'muto', style: 'margin-bottom:6px' }, `Scritto il ${ia.data || 'data non indicata'} · modello ${ia.modello || 'non indicato'}`), md(ia.testo)) :
-      h('div', { class: 'ia' }, h('div', { class: 'et' }, 'Commento dell\'IA, non deterministico'), h('p', { class: 'muto' }, 'Non ancora scritto.')));
+  return h('div', { class: 'numeri' },
+    num('Trade', b.n), num('Media per trade (esc.)', nf(b.media_esc, 3), 'Netto dei costi IG, in escursioni medie giornaliere', segno(b.media_esc)),
+    num('Media lorda (esc.)', nf(b.lorda_esc, 3), 'Prima dei costi'), num('Profit factor', nf(b.pf)),
+    num('Sharpe', nf(b.sharpe)), num('DSR', nf((sc['1_sharpe'] || {}).dsr, 3), 'Probabilità che lo Sharpe sia reale dopo tutte le prove'),
+    num('PBO', nf((sc['2_pbo'] || {}).pbo, 2), 'Probabilità di sovradattamento della famiglia di prove'),
+    num('CPCV mediana', nf((sc['2_cpcv'] || {}).mediana, 2), 'Sharpe mediano sulle combinazioni di anni'),
+    num('CPCV 10° percentile', nf((sc['2_cpcv'] || {}).p10, 2)),
+    num('2019-2023 (esc.)', nf(b.media_recente_esc, 3), '', segno(b.media_recente_esc)),
+    num('Drawdown max (esc.)', nf(b.dd_max_esc, 1)),
+    num('Netto € 1 CFD', eur(e.profitto), 'Profitto 2011-2023 per 1 CFD IG', segno(e.profitto)), num('Drawdown € 1 CFD', eur(e.drawdown)),
+    num('Trade medio €', e.trade_medio == null ? '–' : nf(e.trade_medio, 1) + ' €'));
 }
 let unitaCurva = 'esc';
 function curva(d) {
@@ -286,16 +371,25 @@ function curva(d) {
         ['Peggior serie di perdite a blocchi', mcs.blocchi.serie_perdite]].map(([n, v]) => h('tr', {}, h('td', {}, n), ['p5', 'p50', 'p95'].map(k => h('td', {}, v ? nf(v[k], 1) : '–'))))))) : null);
   return cont;
 }
+function tabellaVoci(titolo, voci, nota) {
+  return h('div', { class: 'pannello' }, h('h3', { style: 'margin-top:0' }, titolo), nota ? h('p', { class: 'muto' }, nota) : null,
+    h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, ['Voce', 'Valore', 'Soglia', 'Esito', 'Cosa misura'].map((t, i) => h('th', { class: i === 4 || i === 0 ? 'sx' : '' }, t)))),
+      h('tbody', {}, [...voci].sort((a, b) => GRAVITA[a.esito] - GRAVITA[b.esito]).map(v => h('tr', {},
+        h('td', { class: 'sx' }, v.nome), h('td', {}, typeof v.valore === 'number' ? nf(v.valore, 3) : v.valore === true ? 'sì' : v.valore === false ? 'no' : '–'),
+        h('td', {}, v.soglia), h('td', {}, badge(v.esito, v.esito)), h('td', { class: 'sx', style: 'white-space:normal;min-width:260px' }, v.spiegazione)))))));
+}
 function giudizio(d) {
   const g = d.scheda.giudizio;
   if (!g) return h('p', { class: 'muto' }, 'Giudizio non calcolato: esegui `python -m motore.cli esperimento arricchisci <nome>`.');
   const ordineG = Object.entries(g.gruppi).sort((a, b) => GRAVITA[a[1].esito] - GRAVITA[b[1].esito]);
-  return h('div', {}, ordineG.map(([k, x]) => h('div', { class: 'pannello' },
-    h('h3', { style: 'margin-top:0' }, x.nome, ' ', badge(x.esito, x.esito), x.cancello ? h('span', { class: 'muto' }, ' · cancello') : null),
-    h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, ['Voce', 'Valore', 'Soglia', 'Esito', 'Cosa misura'].map((t, i) => h('th', { class: i === 4 || i === 0 ? 'sx' : '' }, t)))),
-      h('tbody', {}, [...x.voci].sort((a, b) => GRAVITA[a.esito] - GRAVITA[b.esito]).map(v => h('tr', {},
-        h('td', { class: 'sx' }, v.nome), h('td', {}, typeof v.valore === 'number' ? nf(v.valore, 3) : v.valore === true ? 'sì' : v.valore === false ? 'no' : '–'),
-        h('td', {}, v.soglia), h('td', {}, badge(v.esito, v.esito)), h('td', { class: 'sx', style: 'white-space:normal;min-width:260px' }, v.spiegazione)))))))));
+  return h('div', {},
+    h('p', {}, h('strong', {}, 'Esito: '), badge(g.esito), ' ', g.motivo),
+    g.filtri ? tabellaVoci('Filtri di Andrea', g.filtri, 'Chi non li passa è scartato.') : null,
+    g.statistico ? tabellaVoci('Cancello statistico', g.statistico) : null,
+    g.prova_finale ? tabellaVoci('Prova finale', g.prova_finale, 'Si fa una volta sola, solo per chi ha passato i filtri e il cancello sulla scoperta.') : null,
+    h('h3', {}, 'Dettaglio per gruppo (non decide l\'esito)'),
+    h('div', { class: 'gruppi' }, ordineG.map(([k, x]) => h('div', { class: 'gruppo ' + x.esito }, h('div', { class: 'nome' }, x.nome, ' ', badge(x.esito, x.esito)), h('div', { class: 'sintesi' }, x.sintesi)))),
+    ordineG.map(([k, x]) => tabellaVoci(x.nome, x.voci)));
 }
 function robustezza(d) {
   const r = d.scheda.robustezza;
@@ -411,31 +505,37 @@ async function paginaEsperimenti() {
   const mio = giro;
   const l = await api('/esperimenti');
   vedi(mio, h('h1', {}, 'Esperimenti'), l.length ? h('div', { class: 'tabella-cont' }, h('table', {},
-    h('thead', {}, h('tr', {}, [['Nome'], ['Lato'], ['Prodotti'], ['Barre'], ['Prove', 'Prove di questo esperimento / budget di prove ammesse per la sua scoperta'], ['PBO', 'Probabilità di sovradattamento, massimo fra le famiglie'], ['Candidati'], ['Da rivedere'], ['Scartati']].map(([t, ti]) => h('th', { title: ti }, t)))),
-    h('tbody', {}, l.map(e => { const p = Object.values(e.pbo).flatMap(o => Object.values(o)).filter(x => x != null);
-      return h('tr', { class: 'clic', onclick: () => { location.hash = '#/esperimenti/' + e.nome; } }, h('td', {}, e.nome), h('td', {}, e.intestazione.direzione), h('td', {}, e.intestazione.prodotti.join(', ')),
-        h('td', {}, e.intestazione.barre), h('td', {}, `${e.prove.questa} / ${nf(e.prove.budget, 0)}`), h('td', {}, p.length ? nf(Math.max(...p)) : '–'),
-        h('td', {}, e.esiti.candidato), h('td', {}, e.esiti.da_rivedere), h('td', {}, e.esiti.scartato)); })))) : h('p', { class: 'muto' }, 'Nessun esperimento lanciato.'));
+    h('thead', {}, h('tr', {}, [['Nome'], ['Lato'], ['Prodotti'], ['Barre'], ['Prove', 'Prove di questo esperimento / budget di prove ammesse per la sua scoperta'], ['Dopo i filtri', 'Prove che hanno passato i filtri di Andrea'], ['Candidati'], ['Scartati']].map(([t, ti]) => h('th', { title: ti }, t)))),
+    h('tbody', {}, l.map(e => h('tr', { class: 'clic', onclick: () => { location.hash = '#/esperimenti/' + e.nome; } }, h('td', {}, e.nome), h('td', {}, e.intestazione.direzione), h('td', {}, e.intestazione.prodotti.join(', ')),
+      h('td', {}, e.intestazione.barre), h('td', {}, `${e.prove.questa} / ${nf(e.prove.budget, 0)}`), h('td', {}, e.prove.dopo_filtri == null ? '–' : e.prove.dopo_filtri),
+      h('td', {}, e.esiti.candidato), h('td', {}, e.esiti.scartato)))))) : h('p', { class: 'muto' }, 'Nessun esperimento lanciato.'));
 }
 async function paginaEsperimento(nome) {
   const mio = giro;
-  const e = await api('/esperimenti/' + nome), ih = e.intestazione, pr = e.prove;
+  const e = await api('/esperimenti/' + nome), ih = e.intestazione, pr = e.prove, sg = e.soglie;
+  const imbuto = pr.dopo_filtri == null ? null : [['Prove', pr.questa], ['Dopo i filtri di Andrea', pr.dopo_filtri], ['Dopo DSR e PBO', pr.dopo_cancello], ['Candidati dopo la prova finale', e.esiti.candidato]];
   vedi(mio, h('p', {}, h('a', { href: '#/esperimenti' }, '← Esperimenti')), h('h1', {}, nome),
     h('div', { class: 'pannello' }, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
       h('p', {}, h('strong', {}, 'Fonte: '), ih.fonte), h('p', {}, h('strong', {}, 'Direzione attesa: '), ih.direzione, ` · modo ${ih.modo} · barre da ${ih.barre} min · ${ih.prodotti.join(', ')}${ih.specchio ? ' · con lo specchio' : ''}`),
       h('p', { class: 'muto' }, `Lanciato il ${ih.quando}`)),
     h('h2', {}, 'Prove sul budget'),
-    h('div', { class: 'pannello' }, h('p', {}, `${pr.questa} prove in questo esperimento; ${pr.totali_registro} nel registro dopo il lancio; budget ${nf(pr.budget, 0)} (${pc(pr.totali_registro / pr.budget)}).`),
+    h('div', { class: 'pannello' }, h('p', {}, `${pr.questa} prove in questo esperimento; ${pr.totali_registro} nel registro dopo il lancio; budget ${nf(pr.budget, 0)} (${pc(pr.totali_registro / pr.budget)}).` +
+      (pr.sr_minimo != null ? ` Con ${pr.totali_registro} prove serve uno Sharpe di almeno ${nf(pr.sr_minimo)}; l'esperimento cerca ${nf(pr.sr_obiettivo)}.` : '')),
       h('div', { class: 'barra' }, h('div', { style: `width:${Math.min(100, 100 * pr.totali_registro / pr.budget)}%` }))),
+    imbuto ? h('div', {}, h('h2', {}, 'Dove si sono fermate le prove'),
+      h('div', { class: 'imbuto' }, imbuto.map(([t, n]) => h('div', { class: 'riquadro' }, h('div', { class: 'n' }, n), h('div', { class: 'et' }, t)))),
+      pr.scartate_per && Object.keys(pr.scartate_per).length ? h('div', { class: 'tabella-cont', style: 'margin-top:10px' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Scartate per'), h('th', {}, 'Prove'))),
+        h('tbody', {}, Object.entries(pr.scartate_per).sort((a, b) => b[1] - a[1]).map(([t, n]) => h('tr', {}, h('td', {}, t), h('td', {}, n)))))) : null,
+      e.tempi ? h('p', { class: 'muto' }, 'Tempi (secondi): ' + Object.entries(e.tempi).map(([k, v]) => `${k.replace(/_/g, ' ')} ${nf(v, 1)}`).join(' · ')) : null) : null,
     h('h2', {}, 'PBO ed effettivi per famiglia'),
-    h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Famiglia'), h('th', {}, 'Prodotto'), h('th', { title: 'Probabilità di sovradattamento della selezione; soglia ' + e.soglie.pbo }, 'PBO'),
+    h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, h('th', {}, 'Famiglia'), h('th', {}, 'Prodotto'), h('th', { title: 'Probabilità di sovradattamento della selezione; soglia ' + sg.pbo }, 'PBO'),
       h('th', { title: 'Numero effettivo di prove indipendenti, per il DSR' }, 'Prove effettive'))),
-      h('tbody', {}, Object.entries(e.pbo).flatMap(([f, o]) => Object.entries(o).map(([p, v]) => h('tr', {}, h('td', {}, f), h('td', {}, p), h('td', { class: v != null && v < e.soglie.pbo ? 'pos' : 'neg' }, nf(v)), h('td', {}, nf(pr.n_effettivo[f], 1)))))))),
-    h('h2', {}, 'Candidati'),
-    h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, ['Id', 'Parametri', 'Esito', 'Gruppi', 'Trade', 'Media', 'Sharpe', 'DSR'].map(t => h('th', {}, t)))),
+      h('tbody', {}, Object.entries(e.pbo).flatMap(([f, o]) => Object.entries(o).map(([p, v]) => h('tr', {}, h('td', {}, f), h('td', {}, p), h('td', { class: v != null && v < sg.pbo ? 'pos' : 'neg' }, nf(v)), h('td', {}, nf(pr.n_effettivo[f], 1)))))))),
+    h('h2', {}, 'Sistemi di questo esperimento'),
+    e.candidati.length ? h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, ['Id', 'Parametri', 'Esito', 'Motivo', 'Trade', '€ a trade'].map(t => h('th', {}, t)))),
       h('tbody', {}, e.candidati.map(c => h('tr', { class: 'clic', onclick: () => { location.hash = `#/sistemi/${nome}/${c.id}`; } }, h('td', {}, c.id),
-        h('td', { class: 'sx' }, Object.entries(c.parametri || {}).map(([k, v]) => `${k}=${v}`).join(', ')), h('td', {}, badge(c.esito)), h('td', {}, pallini(c.gruppi)),
-        h('td', {}, c.n), h('td', {}, nf(c.media, 3)), h('td', {}, nf(c.sharpe)), h('td', {}, nf(c.dsr, 3))))))),
+        h('td', { class: 'sx' }, Object.entries(c.parametri || {}).map(([k, v]) => `${k}=${v}`).join(', ')), h('td', {}, badge(c.esito)), h('td', { class: 'sx' }, c.motivo || ''),
+        h('td', {}, c.n), h('td', {}, c.misure && c.misure.guadagno_medio != null ? nf(c.misure.guadagno_medio, 1) + ' €' : '–')))))) : h('p', { class: 'muto' }, 'Nessuna prova ha passato i filtri e il cancello statistico: nessun sistema da mostrare.'),
     h('h2', {}, 'Resoconto'), e.resoconto ? h('div', { class: 'pannello' }, md(e.resoconto)) : h('p', { class: 'muto' }, 'Nessun resoconto scritto.'));
 }
 
@@ -460,7 +560,7 @@ function paginaPortafoglio() {
 }
 
 // ------------------------------------------------------------------ router
-const ROTTE = [[/^\/sistemi$/, paginaSistemi], [/^\/sistemi\/([^/]+)\/([^/]+)(?:\/([a-z]+))?$/, paginaScheda], [/^\/esperimenti$/, paginaEsperimenti],
+const ROTTE = [[/^\/sistemi$/, paginaSistemi], [/^\/sistemi\/([^/]+)\/([^/]+)(?:\/[a-z]+)?$/, paginaScheda], [/^\/esperimenti$/, paginaEsperimenti],
   [/^\/esperimenti\/([^/]+)$/, paginaEsperimento], [/^\/registro$/, paginaRegistro], [/^\/portafoglio$/, paginaPortafoglio]];
 async function render() {
   const mio = ++giro, p = decodeURIComponent(location.hash.replace(/^#/, '')) || '/sistemi';

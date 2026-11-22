@@ -108,8 +108,17 @@ def _rob(lordo=0.03, netto=0.02, sr2=0.5, rapporto=0.8, sp=0.01, gem=0.01, rec=0
             "gemello": {"media_esc": gem}}
 
 
-def _colori(s, r):
-    g = giudizio.giudica(s, r)
+def _misure(**kw):
+    """Misure che passano tutti i filtri di Andrea (trade di 5 ore, 30 euro a trade)."""
+    return {"euro_punto": 1.0, "n": 520, "trade_anno": 40.0, "guadagno_medio": 30.0, "ore_medie": 5.0, "r2": 0.9,
+            "anni_positivi": 0.8, **kw}
+
+
+FUORI_CAMPIONE_OK = {"avanti": {"n": 20, "utile": 100.0, "guadagno_medio": 25.0}}
+
+
+def _colori(s, r, m="ok", pf="ok"):
+    g = giudizio.giudica(s, r, _misure() if m == "ok" else m, FUORI_CAMPIONE_OK if pf == "ok" else pf)
     return g["esito"], {k: v["esito"] for k, v in g["gruppi"].items()}
 
 
@@ -147,17 +156,23 @@ def test_giudizio_soglie():
 
 
 def test_giudizio_esito_complessivo():
-    # un cancello rosso scarta, qualunque cosa dicano gli altri
+    # solo candidato o scartato: decidono filtri, cancello statistico e prova finale, non i colori dei gruppi
+    assert _colori(_scheda(), _rob())[0] == "candidato"
     assert _colori(_scheda(dsr=0.5), _rob())[0] == "scartato"
-    assert _colori(_scheda(), _rob(lordo=0.03, netto=0.0))[0] == "scartato"
-    # un altro gruppo rosso, cancelli ok: da rivedere
-    assert _colori(_scheda(rapporto_dd=2.0), _rob())[0] == "da_rivedere"
-    # cancelli gialli e nessun rosso: candidato
-    assert _colori(_scheda(dsr=0.85, pbo=0.4), _rob(lordo=0.03, netto=0.015))[0] == "candidato"
-    # dati mancanti: grigio e da rivedere, niente promozione né scarto
-    esito, c = _colori(None, None)
-    assert esito == "da_rivedere" and set(c.values()) == {"grigio"}, (esito, c)
-    g = giudizio.giudica(_scheda(), _rob())
+    assert _colori(_scheda(dsr=0.9), _rob())[0] == "scartato"             # DSR giallo ma sotto 0,95
+    assert _colori(_scheda(pbo=0.3), _rob())[0] == "scartato"
+    # i gruppi restano il dettaglio: costi rossi o rischio rosso non cambiano l'esito
+    esito, c = _colori(_scheda(), _rob(lordo=0.03, netto=0.0))
+    assert esito == "candidato" and c["costi"] == "rosso", (esito, c)
+    esito, c = _colori(_scheda(rapporto_dd=2.0), _rob())
+    assert esito == "candidato" and c["rischio"] == "rosso", (esito, c)
+    # dati mancanti: scartato, con il motivo, e tutti i gruppi grigi
+    g = giudizio.giudica(None, None)
+    assert g["esito"] == "scartato" and g["motivo"] == "misure non calcolate", g["motivo"]
+    assert {x["esito"] for x in g["gruppi"].values()} == {"grigio"}
+    assert _colori(None, None, m=_misure())[0] == "scartato"             # senza scheda il DSR manca
+    g = giudizio.giudica(_scheda(), _rob(), _misure(), FUORI_CAMPIONE_OK)
+    assert set(g) >= {"esito", "motivo", "filtri", "statistico", "prova_finale", "misure", "gruppi", "passa_scoperta"}
     for gr in g["gruppi"].values():
         assert {"esito", "voci", "nome", "cancello", "sintesi"} <= set(gr)
         for v in gr["voci"]:
@@ -233,7 +248,8 @@ def test_arricchisci():
             c = json.loads((cart / f"{i}.json").read_text(encoding="utf-8"))
             assert {"robustezza", "giudizio", "prorealcode"} <= set(c), c.keys()
             assert (cart / f"{i}.prc").read_text(encoding="utf-8") == c["prorealcode"]["codice"]
-            assert riga["esito"] == c["giudizio"]["esito"] and riga["esito"] in ("candidato", "da_rivedere", "scartato")
+            assert riga["esito"] == c["giudizio"]["esito"] and riga["esito"] in ("candidato", "scartato")
+            assert riga["motivo"] == c["giudizio"]["motivo"] and riga["misure"]["n"] == c["misure"]["n"]
             assert riga["gruppi"] == {k: g["esito"] for k, g in c["giudizio"]["gruppi"].items()}
             assert set(riga["gruppi"]) == {"caso", "costi", "regolarita", "robustezza", "rischio", "portafoglio"}
             assert c["robustezza"]["vicini"] is not None and c["robustezza"]["euro"]["euro_punto"] == 2.0
@@ -244,7 +260,7 @@ def test_arricchisci():
         assert esperimento.riassunto("prova")["candidati"][0]["esito"] == r["candidati"][0]["esito"]
         # l'esito scritto nel riassunto è quello calcolato dal giudizio, qualunque sia
         vero = giudizio.giudica
-        giudizio.giudica = lambda s, r: {**vero(s, r), "esito": "scartato"}
+        giudizio.giudica = lambda s, r, *a: {**vero(s, r, *a), "esito": "scartato"}
         try:
             r2 = esperimento.arricchisci("prova")
         finally:

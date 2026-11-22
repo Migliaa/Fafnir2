@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from . import dati, esperimento, validazione
+from . import catalogo, dati, esperimento, giudizio, validazione
 
 CAMPI = {"nome": "prova", "ipotesi": "il prezzo sale fra le 09 e le 10", "meccanismo": "flusso d'ordini del mattino",
          "fonte": "dati finti", "direzione": "long", "modo": "ampiezza", "prodotti": ["KW"], "barre": 60,
@@ -37,19 +37,38 @@ def _scrivi(cartella, **modifiche):
     return f
 
 
+CAMBI_FILTRI = {"SOGLIE_GUADAGNO": ((float("inf"), 0.1),), "TRADE_ANNO_MIN": 1.0, "R2_MIN": 0.5, "ANNI_POSITIVI_MIN": 0.2}
+
+
+def installa_dati_finti():
+    """Dati finti al posto di quelli veri e un KW con valore del punto noto e costi nulli. Chiamata anche in ogni
+    processo di lavoro (`esperimento.PREPARA_LAVORATORI`), dove le sostituzioni del processo principale non arrivano."""
+    m = _minuti_finti("KW")
+    dati.minuti = lambda nome, cache=True: m
+    dati.barre = lambda nome, minuti, cache=True: dati.aggrega(m, minuti)
+    catalogo.CATALOGO["KW"] = catalogo.Prodotto("KW", "prova", (), True, 0.0, euro_punto=1.0)
+
+
 class _Ambiente:
-    """Dati finti e cartelle temporanee al posto di quelli veri."""
+    """Dati finti, cartelle temporanee e filtri di Andrea allargati (i dati finti hanno tre anni e vantaggi piccoli)."""
     def __enter__(self):
-        self.vecchi = (dati.barre, dati.minuti, esperimento.CARTELLA, validazione.CARTELLA)
+        self.vecchi = (dati.barre, dati.minuti, esperimento.CARTELLA, validazione.CARTELLA, dict(catalogo.CATALOGO),
+                       {k: getattr(giudizio, k) for k in CAMBI_FILTRI}, esperimento.PREPARA_LAVORATORI)
         self.tmp = Path(tempfile.mkdtemp())
-        m = _minuti_finti("KW")
-        dati.minuti = lambda nome, cache=True: m
-        dati.barre = lambda nome, minuti, cache=True: dati.aggrega(m, minuti)
-        esperimento.CARTELLA, validazione.CARTELLA = self.tmp / "esperimenti", self.tmp / "registro"
+        installa_dati_finti()
+        for k, v in CAMBI_FILTRI.items():
+            setattr(giudizio, k, v)
+        esperimento.CARTELLA, esperimento.PREPARA_LAVORATORI = self.tmp / "esperimenti", "motore.test_esperimento:installa_dati_finti"
+        validazione.CARTELLA = self.tmp / "registro"
         return self.tmp
 
     def __exit__(self, *a):
-        dati.barre, dati.minuti, esperimento.CARTELLA, validazione.CARTELLA = self.vecchi
+        (dati.barre, dati.minuti, esperimento.CARTELLA, validazione.CARTELLA, cat, filtri,
+         esperimento.PREPARA_LAVORATORI) = self.vecchi
+        catalogo.CATALOGO.clear()
+        catalogo.CATALOGO.update(cat)
+        for k, v in filtri.items():
+            setattr(giudizio, k, v)
 
 
 def test_controlla_rifiuta():

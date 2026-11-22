@@ -15,7 +15,7 @@ import numpy as np
 import polars as pl
 from scipy.cluster.hierarchy import fcluster, linkage
 from scipy.spatial.distance import squareform
-from scipy.stats import norm, rankdata
+from scipy.stats import norm
 
 from . import metriche
 from .config import RISULTATI
@@ -58,7 +58,7 @@ def purga(trade_inizio, trade_fine, anni_test, embargo_giorni: int) -> np.ndarra
     return tieni
 
 
-def cpcv_selezione(matrice, date, k: int = 2, embargo_giorni: int = 5) -> dict:
+def cpcv_selezione(matrice, date, k: int = 2, embargo_giorni: int = 5, veloce: bool | None = None) -> dict:
     """CPCV (A3): per ogni combinazione sceglie la variante col miglior Sharpe nel training e ne
     registra lo Sharpe sui k anni di test.
 
@@ -66,12 +66,22 @@ def cpcv_selezione(matrice, date, k: int = 2, embargo_giorni: int = 5) -> dict:
     un blocco di test sono scartati (versione giornaliera di purga ed embargo: la durata massima di un
     trade è 5 giorni). Uscita: mediana, 10° percentile e quota positiva degli Sharpe fuori campione,
     e quante volte è stata scelta ciascuna variante.
+
+    Con molte varianti (`veloce`, di norma da 500 colonne) le somme del training si ottengono dalle somme
+    dell'intero periodo togliendo i giorni esclusi, invece di rielaborare ogni volta tutta la matrice;
+    i risultati sono gli stessi (le colonne si centrano prima, così quelle costanti restano a zero).
     """
     m, d = np.asarray(matrice, dtype=float), np.asarray(date).astype("datetime64[D]")
+    if veloce is None:
+        veloce = m.shape[1] >= 500
     anni = _anni(d)
     emb = np.timedelta64(int(embargo_giorni), "D")
     scelte = np.zeros(m.shape[1], dtype=int)
     oos = []
+    if veloce:
+        mu = m.mean(axis=0)
+        mc = m - mu
+        tot1, tot2 = mc.sum(axis=0), np.einsum("ij,ij->j", mc, mc)
     for train, test in blocchi_cpcv(anni, k):
         in_test = np.isin(anni, test)
         vicino = np.zeros(len(d), dtype=bool)
@@ -82,9 +92,18 @@ def cpcv_selezione(matrice, date, k: int = 2, embargo_giorni: int = 5) -> dict:
         tr = np.isin(anni, train) & ~vicino
         if tr.sum() < 3 or in_test.sum() < 3:
             continue
-        best = int(np.argmax(_sharpe_colonne(m[tr])))
+        if veloce:
+            fuori = mc[~tr]
+            n = int(tr.sum())
+            s1, s2 = tot1 - fuori.sum(axis=0), tot2 - np.einsum("ij,ij->j", fuori, fuori)
+            var = np.maximum(s2 - s1 ** 2 / n, 0) / (n - 1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                sr = np.where(var > 1e-12, (s1 / n + mu) / np.sqrt(var), -np.inf)
+            best = int(np.argmax(sr))
+        else:
+            best = int(np.argmax(_sharpe_colonne(m[tr])))
         scelte[best] += 1
-        oos.append(_sharpe_colonne(m[in_test][:, [best]])[0])
+        oos.append(_sharpe_colonne(m[in_test, best][:, None])[0])
     o = np.array(oos)
     return {"n_combinazioni": len(o), "mediana": _r(np.median(o)), "p10": _r(np.percentile(o, 10)),
             "quota_positiva": _r(np.mean(o > 0)), "scelte": scelte.tolist()}
@@ -97,7 +116,7 @@ def _r(x):
 
 # ---------------------------------------------------------------- PBO (CSCV)
 
-def pbo(matrice, s: int = 16) -> dict:
+def pbo(matrice, s: int = 16, blocco: int = 256) -> dict:
     """Probability of Backtest Overfitting con CSCV (Bailey, Borwein, López de Prado, Zhu 2017, A4).
 
     Il tempo è diviso in `s` blocchi contigui; per ognuna delle C(s, s/2) combinazioni la metà
@@ -106,33 +125,44 @@ def pbo(matrice, s: int = 16) -> dict:
     Uscita anche: mediana dei logit, `prob_perdita_oos` (quota di combinazioni dove la scelta ha Sharpe
     fuori campione negativo) e `degrado_pendenza` (pendenza della regressione dello Sharpe fuori campione
     su quello in-sample della variante scelta; 1 = nessun degrado, 0 o meno = nessun legame).
+
+    Le combinazioni si elaborano a gruppi di `blocco` (somme dei blocchi per prodotto matriciale) e il
+    rango si conta senza ordinare: la memoria resta limitata anche con decine di migliaia di varianti.
     """
     m = np.asarray(matrice, dtype=float)
     if s % 2:
         raise ValueError("s deve essere pari")
     n = m.shape[1]
     parti = np.array_split(m, s)
-    cnt = np.array([len(p) for p in parti], dtype=float)[:, None]
+    cnt = np.array([len(p) for p in parti], dtype=float)
     s1 = np.array([p.sum(axis=0) for p in parti])
     s2 = np.array([(p ** 2).sum(axis=0) for p in parti])
     comb = np.array(list(combinations(range(s), s // 2)))
-    tutte = np.arange(s)
-    comp = np.array([np.setdiff1d(tutte, c) for c in comb])
+    ind = np.zeros((len(comb), s))
+    ind[np.arange(len(comb))[:, None], comb] = 1.0
 
-    def sharpe_gruppi(idx):
-        c, a, b = cnt[idx].sum(axis=1), s1[idx].sum(axis=1), s2[idx].sum(axis=1)
-        media = a / c
-        var = np.maximum(b / c - media ** 2, 0) * c / (c - 1)
+    def sharpe_gruppi(w):
+        c, a, b = w @ cnt, w @ s1, w @ s2
+        media = a / c[:, None]
+        var = np.maximum(b / c[:, None] - media ** 2, 0) * (c / (c - 1))[:, None]
         with np.errstate(divide="ignore", invalid="ignore"):
             return np.where(var > 0, media / np.sqrt(var), -np.inf)
 
-    sr_is, sr_oos = sharpe_gruppi(comb), sharpe_gruppi(comp)
-    best = np.argmax(sr_is, axis=1)
-    righe = np.arange(len(comb))
-    rango = rankdata(sr_oos, axis=1)[righe, best]
+    x, y, rango = [], [], []
+    for i in range(0, len(comb), blocco):
+        w = ind[i:i + blocco]
+        sr_is, sr_oos = sharpe_gruppi(w), sharpe_gruppi(1.0 - w)
+        best = np.argmax(sr_is, axis=1)
+        righe = np.arange(len(w))
+        scelto = sr_oos[righe, best]
+        # rango medio (come rankdata) senza ordinare: quanti sono sotto e quanti uguali
+        sotto, uguali = (sr_oos < scelto[:, None]).sum(axis=1), (sr_oos == scelto[:, None]).sum(axis=1)
+        rango.append(sotto + (uguali + 1) / 2)
+        x.append(sr_is[righe, best])
+        y.append(scelto)
+    x, y, rango = np.concatenate(x), np.concatenate(y), np.concatenate(rango)
     omega = rango / (n + 1)
     logit = np.log(omega / (1 - omega))
-    x, y = sr_is[righe, best], sr_oos[righe, best]
     pend = np.cov(x, y)[0, 1] / np.var(x, ddof=1) if np.var(x) > 0 else float("nan")
     return {"pbo": _r(np.mean(logit <= 0)), "mediana_logit": _r(np.median(logit)),
             "prob_perdita_oos": _r(np.mean(y < 0)), "degrado_pendenza": _r(pend),
@@ -226,24 +256,65 @@ def haircut(sr_annuo: float, anni: float, n_prove: int, metodo: str = "bhy", ran
 
 # ---------------------------------------------------------------- numero di prove indipendenti
 
-def n_indipendenti(matrice, soglia_corr: float = 0.5) -> dict:
+MAX_CAMPIONE_CLUSTER = 2000
+
+
+def _gruppi(corr: np.ndarray, soglia_corr: float) -> np.ndarray:
+    dist = np.clip(1 - corr, 0, None)
+    np.fill_diagonal(dist, 0)
+    return fcluster(linkage(squareform(dist, checks=False), "average"), soglia_corr, "distance")
+
+
+def _cluster_grandi(z: np.ndarray, soglia_corr: float, max_campione: int, seme: int) -> int:
+    """Gruppi di serie standardizzate (colonne di `z`, ddof=1) quando sono troppe per il legame medio.
+
+    Il raggruppamento gerarchico si fa su un campione casuale (seme fisso) di `max_campione` colonne; le altre
+    entrano nel gruppo del cui centroide hanno correlazione >= 1 - soglia, e quelle che non entrano in nessuno
+    si raggruppano di nuovo allo stesso modo. Scalare il numero di gruppi del campione per N / campione
+    sovrastimerebbe: un gruppo di serie quasi uguali compare per intero anche in un campione."""
+    t, k = z.shape
+    if k <= max_campione:
+        return int(len(np.unique(_gruppi(z.T @ z / (t - 1), soglia_corr)))) if k > 1 else k
+    rng = np.random.default_rng(seme)
+    scelte = np.zeros(k, dtype=bool)
+    scelte[rng.choice(k, max_campione, replace=False)] = True
+    zs = z[:, scelte]
+    et = _gruppi(zs.T @ zs / (t - 1), soglia_corr)
+    etichette = np.unique(et)
+    cen = np.column_stack([zs[:, et == e].mean(axis=1) for e in etichette])
+    cen = (cen - cen.mean(axis=0)) / cen.std(axis=0, ddof=1)
+    resto = z[:, ~scelte]
+    migliore = (resto.T @ cen / (t - 1)).max(axis=1)
+    fuori = resto[:, migliore < 1 - soglia_corr]
+    return int(len(etichette)) + (_cluster_grandi(fuori, soglia_corr, max_campione, seme + 1) if fuori.shape[1] else 0)
+
+
+def n_indipendenti(matrice, soglia_corr: float = 0.5, max_campione: int = MAX_CAMPIONE_CLUSTER, seme: int = 0) -> dict:
     """Numero effettivo di prove (Bailey et al. 2014 suggeriscono PCA o clustering, A5).
 
     `autovalori` = (somma l)^2 / somma l^2 sugli autovalori della matrice di correlazione;
     `cluster` = numero di gruppi con legame medio e distanza 1 - correlazione <= `soglia_corr`.
     Le colonne costanti si escludono.
+
+    Con più colonne che giorni gli autovalori non nulli sono quelli della matrice giorni x giorni
+    (stessi della SVD della matrice standardizzata), senza costruire la correlazione N x N. Con più di
+    `max_campione` colonne il raggruppamento usa un campione con seme fisso (vedi `_cluster_grandi`);
+    il risultato dice quando è successo (`campione`, il numero di colonne del campione, altrimenti None).
     """
     m = np.asarray(matrice, dtype=float)
     m = m[:, m.std(axis=0) > 0]
-    k = m.shape[1]
+    t, k = m.shape
     if k < 2:
-        return {"autovalori": float(k), "cluster": k}
-    corr = np.corrcoef(m, rowvar=False)
-    lam = np.clip(np.linalg.eigvalsh(corr), 0, None)
-    dist = np.clip(1 - corr, 0, None)
-    np.fill_diagonal(dist, 0)
-    gruppi = fcluster(linkage(squareform(dist, checks=False), "average"), soglia_corr, "distance")
-    return {"autovalori": float(lam.sum() ** 2 / np.sum(lam ** 2)), "cluster": int(len(np.unique(gruppi)))}
+        return {"autovalori": float(k), "cluster": k, "campione": None}
+    z = (m - m.mean(axis=0)) / m.std(axis=0, ddof=1)
+    if k <= t:
+        lam = np.clip(np.linalg.eigvalsh(z.T @ z / (t - 1)), 0, None)
+    else:
+        lam = np.clip(np.linalg.eigvalsh(z @ z.T / (t - 1)), 0, None)
+    out = {"autovalori": float(lam.sum() ** 2 / np.sum(lam ** 2)),
+           "cluster": _cluster_grandi(z, soglia_corr, max_campione, seme),
+           "campione": max_campione if k > max_campione else None}
+    return out
 
 
 # ---------------------------------------------------------------- registro dei tentativi
@@ -259,24 +330,62 @@ def _righe() -> list[dict]:
     return [json.loads(r) for r in f.read_text(encoding="utf-8").splitlines() if r.strip()]
 
 
-def registra(esperimento: str, famiglia: str, prodotto: str, parametri: dict, giorn, date) -> str:
-    """Aggiunge un tentativo a `tentativi.jsonl` e la sua serie giornaliera a `curve/<famiglia>.parquet`
-    (una colonna per tentativo, righe = date, zero dove il tentativo non ha il giorno). Restituisce l'id."""
+def _scrivi_righe(righe: list[dict]) -> None:
+    tmp = CARTELLA / "tentativi.jsonl.tmp"
+    tmp.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in righe), encoding="utf-8")
+    tmp.replace(CARTELLA / "tentativi.jsonl")
+
+
+def registra_molti(esperimento: str, famiglia: str, prodotto: str, prove: list, date) -> list[str]:
+    """Registra molti tentativi della stessa famiglia e dello stesso prodotto con una sola scrittura per file.
+
+    `prove` è la lista di (parametri, serie giornaliera); `date` le date comuni. Aggiunge le righe a
+    `tentativi.jsonl` e le colonne a `curve/<famiglia>.parquet` (una colonna per tentativo, righe = date,
+    zero dove il tentativo non ha il giorno). Restituisce gli id, nell'ordine delle prove."""
     CARTELLA.mkdir(parents=True, exist_ok=True)
     (CARTELLA / "curve").mkdir(exist_ok=True)
-    g, d = np.asarray(giorn, dtype=float), np.asarray(date).astype("datetime64[D]")
-    id_ = f"t{len(_righe()) + 1:06d}"
-    riga = {"id": id_, "quando": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "esperimento": esperimento, "famiglia": famiglia, "prodotto": prodotto, "parametri": parametri,
-            "sharpe": _r(metriche.sharpe(g)), "giorni": int(len(g))}
+    d = np.asarray(date).astype("datetime64[D]")
+    prima = len(_righe())
+    ids = [f"t{prima + i + 1:06d}" for i in range(len(prove))]
+    quando = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    mat = np.column_stack([np.asarray(g, dtype=float) for _, g in prove]) if prove else np.zeros((len(d), 0))
+    righe = [{"id": i, "quando": quando, "esperimento": esperimento, "famiglia": famiglia, "prodotto": prodotto,
+              "parametri": par, "sharpe": _r(metriche.sharpe(mat[:, j])), "giorni": int(len(d))}
+             for j, (i, (par, _)) in enumerate(zip(ids, prove))]
     with open(CARTELLA / "tentativi.jsonl", "a", encoding="utf-8") as f:
-        f.write(json.dumps(riga, ensure_ascii=False) + "\n")
-    nuova = pl.DataFrame({"data": d.astype("datetime64[D]"), id_: g}).with_columns(pl.col("data").cast(pl.Date))
+        f.write("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in righe))
+    nuova = pl.from_numpy(mat, schema=ids, orient="row").with_columns(
+        pl.Series("data", d).cast(pl.Date)).select("data", *ids)
     pq = CARTELLA / "curve" / f"{_nome_file(famiglia)}.parquet"
     if pq.exists():
         nuova = pl.read_parquet(pq).join(nuova, on="data", how="full", coalesce=True).sort("data")
     nuova.write_parquet(pq)
-    return id_
+    return ids
+
+
+def registra(esperimento: str, famiglia: str, prodotto: str, parametri: dict, giorn, date) -> str:
+    """Un solo tentativo (vedi `registra_molti`). Restituisce l'id."""
+    return registra_molti(esperimento, famiglia, prodotto, [(parametri, giorn)], date)[0]
+
+
+def holdout_usato(id_: str) -> dict | None:
+    """Il segno lasciato da `segna_holdout` sul tentativo (None se la prova finale non è stata fatta)."""
+    for r in _righe():
+        if r["id"] == id_:
+            return r.get("holdout_usato")
+    return None
+
+
+def segna_holdout(id_: str, info: dict) -> None:
+    """Segna che il tentativo ha consumato la prova finale (campo `holdout_usato`). Una volta sola."""
+    righe = _righe()
+    trovato = [r for r in righe if r["id"] == id_]
+    if not trovato:
+        raise KeyError(id_)
+    if trovato[0].get("holdout_usato"):
+        raise ValueError(f"{id_}: prova finale già usata")
+    trovato[0]["holdout_usato"] = info
+    _scrivi_righe(righe)
 
 
 def conteggio(famiglia: str | None = None) -> dict:
@@ -288,7 +397,8 @@ def conteggio(famiglia: str | None = None) -> dict:
     """
     righe = [r for r in _righe() if famiglia is None or r["famiglia"] == famiglia]
     out = {"famiglia": famiglia, "n_prove": len(righe), "famiglie": sorted({r["famiglia"] for r in righe}),
-           "n_effettivo_autovalori": None, "n_effettivo_cluster": None, "var_sharpe": None}
+           "n_effettivo_autovalori": None, "n_effettivo_cluster": None, "campione_cluster": None,
+           "var_sharpe": None}
     if not righe:
         return out
     sr = [r["sharpe"] for r in righe if r["sharpe"] is not None]
@@ -298,8 +408,8 @@ def conteggio(famiglia: str | None = None) -> dict:
     for fam in out["famiglie"]:
         pq = CARTELLA / "curve" / f"{_nome_file(fam)}.parquet"
         if pq.exists():
-            df = pl.read_parquet(pq)
-            serie.append(df.select("data", *[c for c in df.columns if c in ids]))
+            colonne = [c for c in pl.read_parquet_schema(pq) if c in ids]
+            serie.append(pl.read_parquet(pq, columns=["data", *colonne]))
     if serie:
         tot = serie[0]
         for s in serie[1:]:
@@ -307,4 +417,5 @@ def conteggio(famiglia: str | None = None) -> dict:
         mat = tot.fill_null(0.0).drop("data").to_numpy()
         ni = n_indipendenti(mat)
         out["n_effettivo_autovalori"], out["n_effettivo_cluster"] = _r(ni["autovalori"]), ni["cluster"]
+        out["campione_cluster"] = ni.get("campione")
     return out

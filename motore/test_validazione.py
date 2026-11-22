@@ -115,6 +115,96 @@ def test_registro():
         V.CARTELLA = vero
 
 
+def _gruppi_finti(n_gruppi=20, per_gruppo=150, giorni=3300, seme=7):
+    """n_gruppi serie indipendenti, ognuna ripetuta per_gruppo volte con un rumore piccolo."""
+    rng = np.random.default_rng(seme)
+    base = rng.normal(0, 1, (giorni, n_gruppi))
+    return np.repeat(base, per_gruppo, axis=1) + 0.2 * rng.normal(0, 1, (giorni, n_gruppi * per_gruppo))
+
+
+def test_n_indipendenti_su_3000_serie():
+    # 20 gruppi di serie quasi uguali: circa 20 sia dagli autovalori sia dai gruppi, anche col campione
+    x = _gruppi_finti()
+    n = V.n_indipendenti(x)
+    assert n["campione"] == V.MAX_CAMPIONE_CLUSTER, n          # con 3000 colonne il raggruppamento usa il campione
+    assert 19 <= n["autovalori"] <= 24 and n["cluster"] == 20, n
+    esatto = V.n_indipendenti(x, max_campione=5000)           # senza campione, per confronto
+    assert esatto["campione"] is None and esatto["cluster"] == 20 and abs(esatto["autovalori"] - n["autovalori"]) < 1e-9, esatto
+    # il campione non dipende dall'ordine di arrivo: stesso seme, stesso risultato
+    assert V.n_indipendenti(x) == n
+    # più colonne che giorni: gli autovalori vengono dalla matrice giorni x giorni e coincidono con quelli di N x N
+    y = _gruppi_finti(5, 40, 150)
+    corr = np.corrcoef(y, rowvar=False)
+    lam = np.clip(np.linalg.eigvalsh(corr), 0, None)
+    assert abs(V.n_indipendenti(y)["autovalori"] - lam.sum() ** 2 / np.sum(lam ** 2)) < 1e-6
+
+
+def test_pbo_e_cpcv_veloci_come_il_calcolo_semplice():
+    rng = np.random.default_rng(11)
+    m = rng.normal(0.02, 1, (2000, 600))
+    m[:, 5] += 0.1
+    m[:, 9] = 0.0
+    m[:, 10] = m[:, 11]                      # colonne costanti e uguali: rango con pareggi
+    d = _giorni(7.5)[:2000]
+    a, b = V.cpcv_selezione(m, d, veloce=False), V.cpcv_selezione(m, d, veloce=True)
+    assert a == b, (a, b)
+    # PBO: stesso risultato con gruppi di combinazioni piccoli e grandi, e un valore noto sul rumore e sul vantaggio vero
+    assert V.pbo(m[:, :60], blocco=7) == V.pbo(m[:, :60], blocco=5000)
+    # riferimento diretto: per ogni combinazione la variante migliore in-sample e il suo rango fuori campione
+    from itertools import combinations
+    from scipy.stats import rankdata
+    x = m[:, :30]
+    parti = np.array_split(x, 8)
+    logit = []
+    for c in combinations(range(8), 4):
+        dentro = np.vstack([parti[i] for i in c])
+        fuori = np.vstack([parti[i] for i in range(8) if i not in c])
+        sr = lambda a: np.where(a.std(axis=0, ddof=1) > 0, a.mean(axis=0) / a.std(axis=0, ddof=1), -np.inf)
+        best = np.argmax(sr(dentro))
+        w = rankdata(sr(fuori))[best] / (x.shape[1] + 1)
+        logit.append(np.log(w / (1 - w)))
+    atteso = float(np.mean(np.array(logit) <= 0))
+    assert abs(V.pbo(x, s=8)["pbo"] - atteso) < 1e-3, (V.pbo(x, s=8), atteso)
+
+
+def test_registra_molti_e_prova_finale_segnata():
+    vero = V.CARTELLA
+    V.CARTELLA = Path(tempfile.mkdtemp()) / "registro"
+    try:
+        rng = np.random.default_rng(5)
+        d = _giorni(3)
+        prove = [({"x": i}, rng.normal(0, 1, len(d))) for i in range(40)]
+        ids = V.registra_molti("e", "fam", "JY", prove, d)
+        assert ids == [f"t{i:06d}" for i in range(1, 41)]
+        import polars as pl
+        df = pl.read_parquet(V.CARTELLA / "curve" / "fam.parquet")
+        assert df.columns == ["data", *ids] and df.height == len(d)
+        assert np.allclose(df[ids[7]].to_numpy(), prove[7][1])
+        # un secondo prodotto con date diverse si aggiunge alle stesse colonne, zero dove manca il giorno
+        ids2 = V.registra_molti("e", "fam", "AD", [({"x": 0}, rng.normal(0, 1, 100))], d[500:600])
+        assert ids2 == ["t000041"] and pl.read_parquet(V.CARTELLA / "curve" / "fam.parquet").width == 42
+        assert len(V._righe()) == 41
+        # holdout: si segna una volta sola
+        assert V.holdout_usato("t000003") is None
+        V.segna_holdout("t000003", {"quando": "x", "risultato": {"avanti": None}})
+        assert V.holdout_usato("t000003")["quando"] == "x" and V.holdout_usato("t000004") is None
+        assert len(V._righe()) == 41 and V._righe()[2]["parametri"] == {"x": 2}
+        try:
+            V.segna_holdout("t000003", {})
+        except ValueError as ex:
+            assert "già usata" in str(ex)
+        else:
+            raise AssertionError("seconda prova finale accettata")
+        try:
+            V.segna_holdout("t999999", {})
+        except KeyError:
+            pass
+        else:
+            raise AssertionError("id inesistente accettato")
+    finally:
+        V.CARTELLA = vero
+
+
 if __name__ == "__main__":
     for nome, f in list(globals().items()):
         if nome.startswith("test_"):

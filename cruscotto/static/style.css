@@ -3,12 +3,14 @@
   --accento: #4da3ff; --verde: #2fb26a; --giallo: #e0a82e; --rosso: #e5534b; --grigio: #6b7785;
   --verde-bg: rgba(47,178,106,.22); --giallo-bg: rgba(224,168,46,.22); --rosso-bg: rgba(229,83,75,.24); --grigio-bg: rgba(107,119,133,.18);
   --ia: #b48cf0;
+  --f-ind: #3cc2c2; --f-in: #4da3ff; --f-out: #e06ad0;
 }
 :root[data-theme="light"] {
   --sfondo: #f4f6f9; --pannello: #ffffff; --pannello2: #eef1f5; --bordo: #d3dae3; --testo: #1c2530; --muto: #5d6b7a;
   --accento: #1470d6; --verde: #1d8f52; --giallo: #b98100; --rosso: #c93a32; --grigio: #7d8896;
   --verde-bg: rgba(29,143,82,.16); --giallo-bg: rgba(185,129,0,.16); --rosso-bg: rgba(201,58,50,.16); --grigio-bg: rgba(125,136,150,.14);
   --ia: #7a45c8;
+  --f-ind: #0e9a9a; --f-in: #1470d6; --f-out: #b0309f;
 }
 * { box-sizing: border-box; }
 body { margin: 0; display: flex; min-height: 100vh; background: var(--sfondo); color: var(--testo);
@@ -87,3 +89,33 @@ pre.codice { background: var(--pannello2); border: 1px solid var(--bordo); borde
 .campo { margin-bottom: 10px; } .campo label { display: block; color: var(--muto); font-size: 12px; margin-bottom: 3px; }
 .cols { display: grid; grid-template-columns: repeat(auto-fit, minmax(320px, 1fr)); gap: 12px; }
 @media (max-width: 800px) { #menu { display: none; } body { display: block; } }
+
+/* scheda: prima vista senza clic */
+.prima-vista { display: grid; grid-template-columns: minmax(300px, 5fr) 6fr; gap: 16px; align-items: start; margin-bottom: 12px; }
+@media (max-width: 900px) { .prima-vista { grid-template-columns: 1fr; } }
+.col-curva { max-width: 620px; }
+.titolo-fig { font-weight: 600; margin-bottom: 4px; }
+.curva-q { padding: 4px 4px 2px; }
+.curva-q svg.quadrata { width: 100%; height: auto; display: block; }
+.legenda { display: flex; flex-wrap: wrap; gap: 4px 14px; color: var(--muto); font-size: 12px; margin-top: 2px; }
+.legenda i { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 5px; vertical-align: -1px; }
+.sei { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 10px; }
+.num6 { background: var(--pannello); border: 1px solid var(--bordo); border-left: 6px solid var(--grigio); border-radius: 8px; padding: 9px 12px; }
+.num6.verde { border-left-color: var(--verde); } .num6.rosso { border-left-color: var(--rosso); } .num6.giallo { border-left-color: var(--giallo); }
+.num6 .et { color: var(--muto); font-size: 12px; } .num6 .gr { font-size: 28px; font-weight: 700; line-height: 1.15; }
+.num6 .so { font-size: 12px; color: var(--muto); } .num6 .su { color: var(--muto); font-size: 12px; margin-top: 2px; }
+.num6.verde .so { color: var(--verde); } .num6.rosso .so { color: var(--rosso); } .num6.giallo .so { color: var(--giallo); }
+.fuori { margin-top: 10px; padding: 9px 12px; background: var(--pannello); border: 1px solid var(--bordo); border-radius: 8px; }
+.esito-riga { display: flex; align-items: center; gap: 12px; padding: 10px 14px; border-radius: 8px; background: var(--pannello); border: 1px solid var(--bordo); border-left: 6px solid var(--grigio); font-size: 15px; }
+.esito-riga.candidato { border-left-color: var(--verde); } .esito-riga.scartato { border-left-color: var(--rosso); }
+details.sezione { background: var(--pannello); border: 1px solid var(--bordo); border-radius: 8px; margin-bottom: 8px; }
+details.sezione > summary { cursor: pointer; padding: 9px 14px; font-weight: 600; list-style: none; }
+details.sezione > summary::-webkit-details-marker { display: none; }
+details.sezione > summary::before { content: '▸'; display: inline-block; width: 16px; color: var(--muto); }
+details.sezione[open] > summary::before { content: '▾'; }
+details.sezione > .sez-corpo { padding: 4px 14px 14px; }
+.interr { display: inline-flex; align-items: center; gap: 4px; cursor: pointer; }
+.mini { display: block; background: var(--pannello2); border-radius: 4px; }
+td.mini-td { width: 64px; padding: 4px 6px; }
+.motivo { color: var(--rosso); font-size: 12px; white-space: normal; max-width: 340px; }
+.imbuto { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }

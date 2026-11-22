@@ -18,7 +18,7 @@ from urllib.parse import parse_qs, unquote, urlparse
 import numpy as np
 import polars as pl
 
-from motore import validazione
+from motore import giudizio, validazione
 from motore.config import RADICE, RISULTATI
 
 HOST, PORTA = "127.0.0.1", 8765
@@ -71,10 +71,19 @@ def _decisione(dec: dict, nome: str, id_: str) -> dict:
 
 
 def _conta_esiti(righe: list[dict]) -> dict:
-    out = {"candidato": 0, "da_rivedere": 0, "scartato": 0, "non_giudicato": 0}
+    out = {"candidato": 0, "scartato": 0, "non_giudicato": 0}
     for r in righe:
-        out[r.get("esito") or "non_giudicato"] += 1
+        out[r["esito"] if r.get("esito") in ("candidato", "scartato") else "non_giudicato"] += 1
     return out
+
+
+def _soglie(r: dict) -> dict:
+    """Le soglie in vigore: quelle del riassunto, completate con le costanti attuali di `giudizio.py`."""
+    return {"dsr": giudizio.DSR_MIN, "pbo": giudizio.PBO_MAX,
+            "guadagno_euro": [list(x) if x[0] != float("inf") else [None, x[1]] for x in giudizio.SOGLIE_GUADAGNO],
+            "trade_anno": giudizio.TRADE_ANNO_MIN, "r2": giudizio.R2_MIN, "anni_positivi": giudizio.ANNI_POSITIVI_MIN,
+            "fuori_campione": giudizio.FUORI_CAMPIONE_QUOTA_MIN, "rapporto_costi": giudizio.RAPPORTO_COSTI_INDICATIVO,
+            **{k: v for k, v in (r.get("soglie") or {}).items() if k in ("guadagno_euro",) and v}}
 
 
 # ---------------------------------------------------------------- API
@@ -84,7 +93,7 @@ def api_esperimenti() -> list[dict]:
     for nome in _nomi_esperimenti():
         r = _riassunto(nome)
         out.append({"nome": nome, "intestazione": r["intestazione"], "prove": r["prove"], "pbo": r["pbo"],
-                    "soglie": r["soglie"], "n_candidati": len(r["candidati"]),
+                    "soglie": _soglie(r), "n_candidati": len(r["candidati"]),
                     "esiti": _conta_esiti(r["candidati"]), "arricchito": r.get("arricchito")})
     return out
 
@@ -93,6 +102,7 @@ def api_esperimento(nome: str) -> dict:
     r = _riassunto(nome)
     f = DEFINIZIONI / f"{nome}.md"
     r["resoconto"] = f.read_text(encoding="utf-8") if f.exists() else None
+    r["soglie"] = _soglie(r)
     r["esiti"] = _conta_esiti(r["candidati"])
     return r
 
@@ -115,8 +125,65 @@ def api_sistemi() -> list[dict]:
                     "barre": ih["barre"], "direzione_esperimento": ih["direzione"],
                     "etichetta": ", ".join(f"{k}={v}" for k, v in (c.get("parametri") or {}).items())}
             riga.update({f"decisione_{k}": v for k, v in _decisione(dec, nome, c["id"]).items() if k in ("stato", "nota")})
+            riga["mini"] = _mini(nome, c["id"], c.get("euro_punto"))
             out.append(riga)
     return out
+
+
+def _completa(nome: str, id_: str, euro_punto: float | None) -> dict | None:
+    """Curva netta in euro di 1 CFD IG su tutto il tempo, in ordine di data: holdout all'indietro, scoperta, holdout
+    in avanti, ognuno cumulato di seguito al precedente. `segmenti` dice dove inizia e finisce ogni periodo (indici)."""
+    cart = CARTELLA_ESPERIMENTI / nome / "candidati"
+    fg, ft = cart / f"{id_}_giorn.parquet", cart / f"{id_}_trade.parquet"
+    if euro_punto is None or not fg.exists() or not ft.exists():
+        return None
+    t = pl.read_parquet(ft)
+    if "punti" not in t.columns:
+        return None
+    g = pl.read_parquet(fg).sort("data").select("data").join(
+        t.group_by(pl.col("uscita").dt.date().alias("data")).agg(pl.col("punti").sum()), on="data", how="left").fill_null(0.0)
+    parti = [("scoperta", g["data"], g["punti"].to_numpy())]
+    fh = cart / f"{id_}_holdout.parquet"
+    if fh.exists():
+        h = pl.read_parquet(fh).sort("data")
+        for periodo in ("indietro", "avanti"):
+            x = h.filter(pl.col("periodo") == periodo)
+            if x.height:
+                parti.append((periodo, x["data"], x["punti"].to_numpy()))
+    parti.sort(key=lambda q: q[1][0])
+    date, cum, dd, seg, base, picco = [], [], [], [], 0.0, 0.0
+    for periodo, d, x in parti:
+        c = base + np.cumsum(x * euro_punto)
+        picco_c = np.maximum.accumulate(np.maximum(c, picco))
+        seg.append([periodo, len(date), len(date) + len(c) - 1])
+        date += d.dt.strftime("%Y-%m-%d").to_list()
+        cum += np.round(c, 2).tolist()
+        dd += np.round(c - picco_c, 2).tolist()
+        base, picco = float(c[-1]), float(picco_c[-1])
+    return {"date": date, "cum": cum, "dd": dd, "segmenti": seg, "unita": "eur"}
+
+
+_CACHE_MINI: dict = {}
+
+
+def _mini(nome: str, id_: str, euro_punto: float | None) -> dict | None:
+    """Curva ridotta a circa 60 punti per il grafico piccolo dell'elenco (con gli estremi dei tre periodi)."""
+    f = CARTELLA_ESPERIMENTI / nome / "candidati" / f"{id_}_trade.parquet"
+    if euro_punto is None or not f.exists():
+        return None
+    fh = f.with_name(f"{id_}_holdout.parquet")
+    chiave = (str(f), f.stat().st_mtime_ns, fh.stat().st_mtime_ns if fh.exists() else None, euro_punto)
+    if chiave not in _CACHE_MINI:
+        c = _completa(nome, id_, euro_punto)
+        if not c:
+            _CACHE_MINI[chiave] = None
+        else:
+            n = len(c["cum"])
+            idx = sorted({int(round(i * (n - 1) / 59)) for i in range(60)})
+            _CACHE_MINI[chiave] = {"y": [c["cum"][i] for i in idx],
+                                   "segmenti": [[p, idx.index(min(idx, key=lambda i: abs(i - a))), idx.index(min(idx, key=lambda i: abs(i - b)))]
+                                                for p, a, b in c["segmenti"]]}
+    return _CACHE_MINI[chiave]
 
 
 def _curva(nome: str, id_: str, euro_punto: float | None) -> dict | None:
@@ -207,8 +274,8 @@ def api_sistema(nome: str, id_: str) -> dict:
     if prc is None and cod.exists():
         prc = {"codice": cod.read_text(encoding="utf-8"), "completo": None, "da_tradurre": []}
     return {"nome": f"{nome}/{id_}", "esperimento": nome, "id": id_, "intestazione": r["intestazione"],
-            "soglie": r["soglie"], "riga": riga, "lato": _lato(r["intestazione"], c.get("famiglia", "")),
-            "scheda": c, "curva": curva, "trade": _trade(nome, id_), "codice": prc,
+            "soglie": _soglie(r), "riga": riga, "lato": _lato(r["intestazione"], c.get("famiglia", "")),
+            "scheda": c, "curva": curva, "completa": _completa(nome, id_, euro_punto), "trade": _trade(nome, id_), "codice": prc,
             "commento_ia": _commento(nome, id_), "decisione": _decisione(_decisioni(), nome, id_)}
 
 

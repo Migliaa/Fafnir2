@@ -32,7 +32,7 @@ class Prodotto:
     adatto: bool = True
     verificato: bool = False
     note: str = ""
-    euro_punto: float | None = None   # valore di 1 CFD IG per punto di prezzo (indici: 1 per punto); None se non noto
+    euro_punto: float | None = None   # valore di 1 CFD IG per punto: indici e oro (contratti "(1€)" e "(E1)" di IG) 1 euro; None se non noto
 
     def spread_a(self, ore: np.ndarray) -> np.ndarray:
         """Spread in punti per ogni ora d'ingresso (ore decimali italiane)."""
@@ -98,7 +98,8 @@ CATALOGO: dict[str, Prodotto] = {p.nome: p for p in [
     _P("TY", "tassi", ("US", "FGBL"), True, 0.02),
     _P("US", "tassi", ("TY",), True, 0.04),
     # metalli ed energia: forma spot (senza scadenza)
-    _P("GC", "metalli", ("SI", "PL"), True, 0.7, finanziamento=ORO, note="IG indica anche 0,3 come minimo"),
+    _P("GC", "metalli", ("SI", "PL"), True, 0.7, finanziamento=ORO, euro_punto=1.0,
+       note="IG indica anche 0,3 come minimo; contratto oro (E1): 1 euro a punto"),
     _P("SI", "metalli", ("GC",), True, 0.02, finanziamento=ORO),
     _P("PL", "metalli", ("GC",), True, 1.8, finanziamento=MP),
     _P("HG", "metalli", ("PL",), True, 0.002, finanziamento=MP, adatto=False),

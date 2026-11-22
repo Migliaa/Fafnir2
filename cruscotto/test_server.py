@@ -27,7 +27,42 @@ def _chiama(porta, percorso, corpo=None, host=None, origine=None):
         return e.code, e.read()
 
 
+def test_curva_con_i_due_holdout():
+    """Curva completa con serie FINTE dei due holdout (numeri costruiti qui): fasce in ordine di data, cumulato continuo."""
+    import shutil
+
+    import numpy as np
+    import polars as pl
+    tmp = Path(tempfile.mkdtemp())
+    dst = tmp / ESP
+    shutil.copytree(server.CARTELLA_ESPERIMENTI / ESP, dst)
+    (dst / "commenti").mkdir(exist_ok=True)
+    ind = pl.DataFrame({"data": [__import__("datetime").date(2010, 12, 28), __import__("datetime").date(2010, 12, 29)], "punti": [10.0, -4.0],
+                        "periodo": ["indietro", "indietro"]})
+    avanti = pl.DataFrame({"data": [__import__("datetime").date(2024, 1, 2), __import__("datetime").date(2024, 1, 3), __import__("datetime").date(2024, 1, 4)],
+                           "punti": [5.0, 5.0, -2.0], "periodo": ["avanti"] * 3})
+    pl.concat([ind, avanti]).select("data", "periodo", "punti").write_parquet(dst / "candidati" / "c01_holdout.parquet")
+    vero, server.CARTELLA_ESPERIMENTI = server.CARTELLA_ESPERIMENTI, tmp
+    try:
+        c = server._completa(ESP, "c01", 1.0)
+        assert [x[0] for x in c["segmenti"]] == ["indietro", "scoperta", "avanti"], c["segmenti"]
+        (_, a0, a1), (_, b0, b1), (_, c0, c1) = c["segmenti"]
+        assert (a0, a1) == (0, 1) and b0 == 2 and c1 == len(c["cum"]) - 1 and c0 == b1 + 1
+        assert c["cum"][:2] == [10.0, 6.0] and c["date"][0] == "2010-12-28" and c["date"][-1] == "2024-01-04"
+        g = pl.read_parquet(dst / "candidati" / "c01_giorn.parquet").sort("data")
+        t = pl.read_parquet(dst / "candidati" / "c01_trade.parquet")
+        profitto = float(t["punti"].sum())
+        assert abs(c["cum"][b1] - (6.0 + profitto)) < 0.01 and abs(c["cum"][-1] - (6.0 + profitto + 8.0)) < 0.01
+        assert c["date"][b0] == str(g["data"][0]) and c["date"][b1] == str(g["data"][-1])
+        assert min(c["dd"]) <= c["dd"][b1] <= 0
+        m = server._mini(ESP, "c01", 1.0)
+        assert m["segmenti"][0][0] == "indietro" and m["segmenti"][-1][0] == "avanti" and len(m["y"]) <= 60
+    finally:
+        server.CARTELLA_ESPERIMENTI = vero
+
+
 def main():
+    test_curva_con_i_due_holdout()
     tmp = Path(tempfile.mkdtemp())
     server.DECISIONI = tmp / "cruscotto" / "decisioni.json"
     srv = server.crea_server(0)
@@ -52,6 +87,11 @@ def main():
         assert len(righe) == 10 and righe[0]["esito"] and set(righe[0]["gruppi"]) == {
             "caso", "costi", "regolarita", "robustezza", "rischio", "portafoglio"}
         assert righe[0]["decisione_stato"] == "da guardare"
+        # esiti: solo candidato o scartato; col guadagno medio di 4,4 euro a trade nessun candidato dell'esperimento DAX passa
+        assert {r["esito"] for r in righe} == {"scartato"} and e["esiti"] == {"candidato": 0, "scartato": 10, "non_giudicato": 0}
+        assert all(r["motivo"].startswith("guadagno medio") and r["misure"]["guadagno_medio"] < 20 for r in righe)
+        assert lista[0]["soglie"]["trade_anno"] == 12 and lista[0]["soglie"]["guadagno_euro"][0] == [36.0, 20.0]
+        assert righe[0]["mini"]["y"] and righe[0]["mini"]["segmenti"][0][0] == "scoperta" and not righe[0]["fuori_campione"]
 
         # i numeri della scheda di c01 sono quelli del file dei candidati
         s = j(f"/api/sistemi/{ESP}/c01")
@@ -71,6 +111,11 @@ def main():
         assert abs(cu["esc"]["cum"][-1] - c["scheda"]["4_robustezza"]["profitto"]) < 0.01, cu["esc"]["cum"][-1]
         assert abs(-min(cu["esc"]["dd"]) - c["scheda"]["3_regolarita"]["massimo"]) < 0.01
         assert abs(cu["eur"]["cum"][-1] - c["robustezza"]["euro"]["profitto"]) < 0.5
+        # curva completa in euro: senza prova finale una sola fascia, la scoperta, e chiude sul profitto in euro
+        co = s["completa"]
+        assert [x[0] for x in co["segmenti"]] == ["scoperta"] and abs(co["cum"][-1] - c["robustezza"]["euro"]["profitto"]) < 0.5
+        assert len(co["date"]) == len(co["cum"]) == len(co["dd"]) and min(co["dd"]) <= 0 and co["date"][-1] <= "2023-12-31"
+        assert c["misure"]["guadagno_medio"] < 20 and c["prova_finale"] is None and c["giudizio"]["prova_finale"] is None
         assert cu["esc"]["mc"]["p5"][-1] < cu["esc"]["mc"]["p50"][-1] < cu["esc"]["mc"]["p95"][-1]
         assert len(s["trade"]["righe"]) == c["backtest"]["n"] and "punti" in s["trade"]["colonne"]
         assert s["codice"]["codice"] == (server.CARTELLA_ESPERIMENTI / ESP / "candidati" / "c01.prc").read_text(encoding="utf-8")

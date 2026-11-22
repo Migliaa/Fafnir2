@@ -30,20 +30,30 @@ from ..config import RECENTE, SCOPERTA
 GIORNI_NOMI = ["lun", "mar", "mer", "gio", "ven", "sab", "dom"]
 
 
-def _anni(df: pl.DataFrame) -> pl.DataFrame:
-    return df.filter(pl.col("apre").dt.year().is_between(*SCOPERTA))
+def _anni(df: pl.DataFrame, anni=SCOPERTA) -> pl.DataFrame:
+    """Barre degli anni (inclusi) di `anni`; un estremo None vale senza limite."""
+    da, a = anni
+    return df.filter(pl.col("apre").dt.year().is_between(-9999 if da is None else da, 9999 if a is None else a))
 
 
-def base(nome: str, minuti: int) -> pl.DataFrame:
-    """Barre della scoperta con il contesto giornaliero che serve alle condizioni."""
-    g = _anni(dati.barre(nome, 1440)).sort("apre")
+def base(nome: str, minuti: int, anni=None) -> pl.DataFrame:
+    """Barre con il contesto giornaliero che serve alle condizioni.
+
+    Senza `anni` sono quelle della scoperta (`config.SCOPERTA`), con il contesto giornaliero calcolato solo su quegli
+    anni. Con `anni = (da, a)` (la prova finale) le barre sono quelle del periodo, ma il contesto giornaliero usa
+    tutta la storia fino alla fine del periodo, per non perdere i primi giorni."""
+    if anni is None:
+        g = _anni(dati.barre(nome, 1440)).sort("apre")
+    else:
+        g = _anni(dati.barre(nome, 1440), (None, anni[1])).sort("apre")
     g = g.with_columns(
         pl.col("apre").dt.date().alias("data"),
         pl.col("o").alias("dopen"),
         (pl.col("h") - pl.col("l")).rolling_mean(20).shift(1).alias("esc"),
         *[pl.col(x).shift(k).alias(f"{x}{k}") for x in "ohlc" for k in range(1, 6)],
     ).drop("apre", "chiude", "o", "h", "l", "c", "v", "minuti")
-    b = _anni(dati.barre(nome, minuti)).sort("apre").with_columns(pl.col("apre").dt.date().alias("data"))
+    b = _anni(dati.barre(nome, minuti), SCOPERTA if anni is None else anni).sort("apre").with_columns(
+        pl.col("apre").dt.date().alias("data"))
     b = b.join(g, on="data", how="left").with_columns(
         pl.col("h").cum_max().over("data").alias("dmax"),
         pl.col("l").cum_min().over("data").alias("dmin"),
@@ -52,6 +62,7 @@ def base(nome: str, minuti: int) -> pl.DataFrame:
         pl.col("chiude").dt.weekday().alias("giorno"),
         (pl.col("chiude").dt.hour().cast(pl.Int32) * 60 + pl.col("chiude").dt.minute().cast(pl.Int32)).alias("tod"),
         (pl.col("data").cast(pl.Int32)).alias("dn"),
+        (pl.col("apre").dt.hour().cast(pl.Float64) + pl.col("apre").dt.minute().cast(pl.Float64) / 60).alias("ore"),
     )
 
 
@@ -123,21 +134,39 @@ def candidati(tabella: pl.DataFrame, regola: dict) -> np.ndarray:
         filtro &= pl.col("tod").is_between(da, a) if da <= a else ~pl.col("tod").is_between(a + 1, da - 1)
     for cond in regola.get("cond", []):
         filtro &= condizioni.condizione(cond, lato).fill_null(False)
-    return tabella.with_row_index("i").filter(filtro)["i"].to_numpy().astype(np.int64)
+    return np.flatnonzero(tabella.select(filtro.alias("m"))["m"].to_numpy()).astype(np.int64)
+
+
+_PREPARATE: list = []     # ultime tabelle con i loro array: le conversioni costano più della simulazione
+
+
+def _preparate(b: pl.DataFrame) -> dict:
+    for tab, arr in _PREPARATE:
+        if tab is b:
+            return arr
+    arr = {x: b[x].to_numpy() for x in ("o", "h", "l", "esc")}
+    arr["esc0"] = np.nan_to_num(arr["esc"])
+    arr["tod"], arr["giorno"], arr["dn"] = (b[x].to_numpy().astype(np.int64) for x in ("tod", "giorno", "dn"))
+    arr["ore"] = (b["ore"].to_numpy() if "ore" in b.columns
+                  else b["apre"].dt.hour().to_numpy() + b["apre"].dt.minute().to_numpy() / 60)
+    _PREPARATE.insert(0, (b, arr))
+    del _PREPARATE[4:]
+    return arr
 
 
 def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = None,
-          molt_costi: float = 1.0) -> dict:
+          molt_costi: float = 1.0, riassumi: bool = True) -> dict:
     """Restituisce (riassunto JSON, tabella dei trade). `molt_costi` moltiplica i costi del catalogo
-    (2.0 = costi doppi); la colonna `punti` è il netto in punti di prezzo."""
+    (2.0 = costi doppi); la colonna `punti` è il netto in punti di prezzo e `costo` il costo in punti.
+    Con `riassumi=False` il riassunto è vuoto (serve solo la tabella dei trade, molto più veloce)."""
     b = base(nome, minuti) if tabella is None else tabella
     lato = int(regola["lato"])
     cand = candidati(b, regola)
 
     u = regola.get("uscita", {})
-    arr = {x: b[x].to_numpy() for x in ("o", "h", "l", "esc")}
-    tod, giorno, dn = (b[x].to_numpy().astype(np.int64) for x in ("tod", "giorno", "dn"))
-    ent, usc, px = _simula(cand, arr["o"], arr["h"], arr["l"], np.nan_to_num(arr["esc"]), tod, giorno, dn, lato,
+    arr = _preparate(b)
+    tod, giorno, dn = arr["tod"], arr["giorno"], arr["dn"]
+    ent, usc, px = _simula(cand, arr["o"], arr["h"], arr["l"], arr["esc0"], tod, giorno, dn, lato,
                            -1 if u.get("barre") is None else int(u["barre"]), _min(u.get("ora")),
                            _min(u.get("venerdi")), int(u.get("giorni") or 0),
                            float(regola.get("stop") or 0), float(regola.get("target") or 0),
@@ -146,14 +175,13 @@ def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = N
     esc = arr["esc"][dec]
     lordo = lato * (px - arr["o"][ent]) / esc
     prod = catalogo.prodotto(nome)
-    ore = b["apre"].dt.hour().to_numpy()[ent] + b["apre"].dt.minute().to_numpy()[ent] / 60
-    costo = prod.costo(ore, arr["o"][ent], dn[usc] - dn[ent])
-    costo_p = 0.0 if costo is None else molt_costi * costo
+    costo = prod.costo(arr["ore"][ent], arr["o"][ent], dn[usc] - dn[ent])
+    costo_p = np.zeros(len(ent)) if costo is None else molt_costi * costo
     netto = lordo - costo_p / esc
     punti = lato * (px - arr["o"][ent]) - costo_p
     trade = pl.DataFrame({"ingresso": b["apre"].gather(ent), "uscita": b["apre"].gather(usc),
-                          "barre": usc - ent, "lordo": lordo, "netto": netto, "punti": punti})
-    return _riassunto(nome, minuti, regola, trade, b, costo is not None), trade
+                          "barre": usc - ent, "lordo": lordo, "netto": netto, "punti": punti, "costo": costo_p})
+    return (_riassunto(nome, minuti, regola, trade, b, costo is not None) if riassumi else {}), trade
 
 
 def _riassunto(nome, minuti, regola, trade, b, con_costi) -> dict:

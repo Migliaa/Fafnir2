@@ -9,7 +9,7 @@ Uso (dalla cartella del progetto):
   python -m motore.cli minbtl --sr 0.7 --anni 13 [--prove 50]
   python -m motore.cli registro stato [--famiglia X]
   python -m motore.cli backtest FDAX esperimenti/regola.json --barre 30
-  python -m motore.cli esperimento controlla|lancia|riassunto|arricchisci <file.json | nome>
+  python -m motore.cli esperimento controlla|lancia|riassunto|arricchisci <file.json | nome> [--riprendi] [--lavoratori N]
 """
 from __future__ import annotations
 
@@ -56,6 +56,8 @@ def main(argv: list[str] | None = None) -> None:
     x = sub.add_parser("esperimento", help="controlla o lancia un file d'esperimento, o ne stampa il riassunto")
     x.add_argument("azione", choices=["controlla", "lancia", "riassunto", "arricchisci"])
     x.add_argument("bersaglio", help="file .json (controlla, lancia) o nome dell'esperimento (riassunto, arricchisci)")
+    x.add_argument("--riprendi", action="store_true", help="lancia: continua un lancio interrotto")
+    x.add_argument("--lavoratori", type=int, help="lancia: processi (di norma i processori meno uno)")
     a = p.parse_args(argv)
 
     if a.cmd == "eventi":
@@ -72,11 +74,11 @@ def main(argv: list[str] | None = None) -> None:
         if a.azione == "controlla":
             out = esperimento.controlla(a.bersaglio)
         elif a.azione == "lancia":
-            out = esperimento.lancia(a.bersaglio)
+            out = esperimento.lancia(a.bersaglio, lavoratori=a.lavoratori, riprendi=a.riprendi)
         elif a.azione == "arricchisci":
             r = esperimento.arricchisci(a.bersaglio)
             out = {"esperimento": a.bersaglio, "candidati": [
-                {"id": c["id"], "esito": c["esito"], "gruppi": c["gruppi"], "netto_euro": c.get("netto_euro")}
+                {"id": c["id"], "esito": c["esito"], "motivo": c.get("motivo"), "gruppi": c["gruppi"], "netto_euro": c.get("netto_euro")}
                 for c in r["candidati"]]}
         else:
             out = esperimento.riassunto(a.bersaglio)

@@ -114,15 +114,16 @@ def _percorso(cand, o, esc, tod, giorno, dn, apre, bar_m0, mt, mo, mh, ml,
 
 
 def simula(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = None,
-           m1: pl.DataFrame | None = None, molt_costi: float = 1.0):
+           m1: pl.DataFrame | None = None, molt_costi: float = 1.0, anni=None):
     """Restituisce (riassunto JSON, tabella dei trade), come `eventi.prova`, con stop, target e
     pareggio controllati sui minuti. `tabella` è la base di `eventi.base`, `m1` i minuti
     (`dati.minuti`) del prodotto; se mancano si caricano. `molt_costi` moltiplica i costi del
-    catalogo (2.0 = costi doppi); la colonna `punti` dei trade è il netto in punti di prezzo."""
-    b = eventi.base(nome, minuti) if tabella is None else tabella
+    catalogo (2.0 = costi doppi); la colonna `punti` dei trade è il netto in punti di prezzo e `costo` il costo.
+    `anni` (None: la scoperta) è il periodo; con la tabella già costruita deve essere lo stesso."""
+    b = eventi.base(nome, minuti, anni) if tabella is None else tabella
     if m1 is None:
         m1 = dati.minuti(nome)
-    m1 = m1.filter(pl.col("apre").dt.year().is_between(*SCOPERTA)).sort("apre")
+    m1 = eventi._anni(m1, SCOPERTA if anni is None else anni).sort("apre")
     lato = int(regola["lato"])
     cand = eventi.candidati(b, regola)
 
@@ -145,7 +146,7 @@ def simula(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = 
     prod = catalogo.prodotto(nome)
     ore = b["apre"].dt.hour().to_numpy()[ent] + b["apre"].dt.minute().to_numpy()[ent] / 60
     costo = prod.costo(ore, arr["o"][ent], dn[ubar] - dn[ent])
-    costo_p = 0.0 if costo is None else molt_costi * costo
+    costo_p = np.zeros(len(ent)) if costo is None else molt_costi * costo
     netto = lordo - costo_p / esc
     punti = lato * (px - arr["o"][ent]) - costo_p
     tipo = b.schema["apre"]
@@ -153,5 +154,5 @@ def simula(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = 
               .dt.replace_time_zone("UTC").dt.convert_time_zone(tipo.time_zone).cast(tipo))
     trade = pl.DataFrame({"ingresso": b["apre"].gather(ent), "uscita": uscita, "barre": ubar - ent,
                           "lordo": lordo, "netto": netto, "punti": punti,
-                          "motivo": MOTIVI[mot]})
+                          "costo": costo_p, "motivo": MOTIVI[mot]})
     return eventi._riassunto(nome, minuti, regola, trade, b, costo is not None), trade
