@@ -5,6 +5,7 @@ Uso (dalla cartella del progetto):
   python -m motore.cli mappa calcola AUDJPY --barre 60 --ore 72
   python -m motore.cli mappa migliori AUDJPY --barre 60 --k 10
   python -m motore.cli mappa cella AUDJPY --barre 60 --giorno lun --ora 03:00 --durata 67
+  python -m motore.cli eventi FDAX esperimenti/regola.json --barre 30 --specchio
   python -m motore.cli minbtl --sr 0.7 --anni 13 [--prove 50]
   python -m motore.cli registro stato [--famiglia X]
 """
@@ -14,8 +15,10 @@ import argparse
 import json
 import sys
 
-from . import catalogo, metriche, validazione
-from .motori import mappa
+from pathlib import Path
+
+from . import catalogo, condizioni, metriche, validazione
+from .motori import eventi, mappa
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -39,9 +42,21 @@ def main(argv: list[str] | None = None) -> None:
     r = sub.add_parser("registro")
     r.add_argument("azione", choices=["stato"])
     r.add_argument("--famiglia")
+    e = sub.add_parser("eventi", help="prova una regola (JSON in riga o file .json)")
+    e.add_argument("prodotto")
+    e.add_argument("regola")
+    e.add_argument("--barre", type=int, default=60)
+    e.add_argument("--specchio", action="store_true", help="prova anche la regola speculare")
     a = p.parse_args(argv)
 
-    if a.cmd == "catalogo":
+    if a.cmd == "eventi":
+        testo = Path(a.regola).read_text(encoding="utf-8") if a.regola.endswith(".json") else a.regola
+        regola = json.loads(testo)
+        tab = eventi.base(a.prodotto, a.barre)
+        out = {"regola": eventi.prova(a.prodotto, a.barre, regola, tab)[0]}
+        if a.specchio:
+            out["specchio"] = eventi.prova(a.prodotto, a.barre, condizioni.specchia(regola), tab)[0]
+    elif a.cmd == "catalogo":
         out = catalogo.riassunto()
     elif a.cmd == "minbtl":
         prove = [a.prove] if a.prove else [10, 20, 50, 100, 400]

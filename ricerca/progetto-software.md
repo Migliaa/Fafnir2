@@ -163,7 +163,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 2 | schema in-sample/out-of-sample e metriche decisi dalla ricerca | fatta (2026-11-22) |
 | 3 | `catalogo` (orari, costi, gemelli) e `motori/mappa`; taratura su AUDJPY e DAX | fatta (2026-11-22): AUDJPY ritrovato, DAX rimandato alla fase 5 |
 | 4 | `metriche` e `validazione` (delegabile con specifica) | fatta (2026-11-22), specifica in `spec-fase-4.md` |
-| 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | |
+| 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | fatta (2026-11-22): long di 165 DAX e short dell'oro ritrovati, gli altri tre deboli |
 | 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | |
 | 7 | `coda` notturna e rapporto del mattino; primi esperimenti: setaccio e trapianti dei modelli 128 e 185 | |
 | 8 | `uscita` verso ProRealCode e `portafoglio` (delegabili) | |
@@ -185,6 +185,20 @@ Comandi: `python -m motore.cli mappa calcola|migliori|cella <prodotto> --barre 6
 - *Perdite a grappolo.* Una serie a media zero con soli periodi più agitati non ha drawdown molto diversi dal rimescolamento semplice (rapporto fra 0,8 e 1,4 secondo il seme). Il bootstrap a blocchi fa la differenza quando nei periodi agitati il sistema perde davvero (media negativa negli agitati e positiva nei calmi): lì il drawdown mediano a blocchi è 1,3-1,7 volte quello rimescolato. Il rapporto della scheda misura quindi proprio le perdite raggruppate chieste da Andrea, non la semplice volatilità variabile.
 - *La CPCV da sola non basta contro la selezione.* Su 50 varianti di puro rumore la variante scelta sugli anni di training è quasi sempre la stessa (la migliore per caso sull'intero campione), e il suo Sharpe sugli anni di test resta positivo nel 94% delle combinazioni, perché i training si sovrappongono quasi del tutto. La distribuzione CPCV si legge quindi sempre insieme al PBO e al DSR, che su quello stesso rumore danno l'allarme (PBO 0,58).
 - MinBTL controllata: 13 anni e Sharpe 0,7 ammettono 24 prove indipendenti, 6 anni e Sharpe 1 ne ammettono 20.
+
+**Taratura della fase 5** (motore degli eventi, regole tradotte alla lettera in `esperimenti/taratura/`, futures 2011-2023, netto dei costi IG, senza stop né target salvo dove detto; "specchio" è la stessa regola sull'altro lato):
+
+| Gamba | Trade | Media per trade (escursioni) | Profit factor | Anni positivi | 2019-2023 | Specchio |
+|---|---|---|---|---|---|---|
+| 165 DAX long | 590 | +0,075 | 1,24 | 10 su 13 | +0,058 | +0,019 |
+| 165 DAX short | 536 | +0,022 | 1,11 | 8 su 13 | −0,024 | +0,007 |
+| 185 NQ short | 105 | +0,017 (lorda +0,087) | 1,03 | 6 su 13 | +0,068 | −0,156 |
+| 185 oro long | 529 | +0,005 (lorda +0,057) | 1,01 | 7 su 13 | −0,002 | −0,068 |
+| 185 oro short | 154 | +0,193 | 1,43 | 8 su 13 | +0,196 | −0,002 |
+
+- Il long di 165 DAX c'è, e senza le sue due condizioni la stessa finestra dava zero (taratura della fase 3): il vantaggio sta nelle condizioni, come atteso. Lo short dell'oro c'è con il profit factor più alto. Le due gambe valgono più dello specchio, quindi non sono andamento generale del prodotto.
+- Lo short di 165 DAX, lo short del Nasdaq e il long dell'oro sui futures 2011-2023 sono vicini a zero. Aggiungere stop e target convertiti in escursioni (circa 2 escursioni di stop, target come nel codice) non cambia il quadro. Il Nasdaq short vive di pochi anni (2020 e 2022) con 105 trade in 13 anni, e il costo di tenerlo fino a 4 giorni mangia quattro quinti del lordo.
+- Cause possibili, da controllare prima di dire che quelle gambe sono fragili: l'apertura della giornata (`DOpen`) di ProRealTime sui CFD IG americani e sull'oro potrebbe non essere la mezzanotte italiana usata qui; il long dell'oro nel codice ha anche la condizione "nuovo massimo", non ancora tradotta; i sistemi sono stati scelti su backtest IG che arrivano al 2026, e gli anni 2024-2025 qui non si guardano.
 
 ## Prodotti
 
