@@ -1,0 +1,44 @@
+{
+ "nome": "dax-long-5m-momento-chiusura",
+ "ipotesi": "Se alle 17:00 il DAX è salito rispetto alla chiusura di ieri, continua a salire fino alla chiusura dell'asta Xetra delle 17:30 (o oltre).",
+ "meccanismo": "Chi ha venduto opzioni (market maker, ETF a leva) copre il gamma comprando nella direzione del movimento della giornata, soprattutto nell'ultima mezz'ora prima della chiusura del mercato a pronti; più grande il movimento, più grande la copertura.",
+ "fonte": "studio accademico: Gao, Han, Li, Zhou 2018 (JFE, momento intraday sull'S&P); Baltussen, Da, Lammers, Martens 2021 (JFE, 60 futures compreso il DAX, effetto più forte nei giorni di gamma negativo)",
+ "direzione": "long",
+ "modo": "verticale",
+ "prodotti": [
+  "FDAX"
+ ],
+ "barre": 5,
+ "regola": {
+  "lato": 1,
+  "da": "17:00",
+  "a": "17:00",
+  "cond": [
+   [
+    "dal_close_ieri",
+    ">=",
+    0.25
+   ]
+  ],
+  "uscita": {
+   "ora": "17:30"
+  },
+  "max_al_giorno": 1
+ },
+ "griglia": {
+  "cond.0.2": [
+   0,
+   0.25,
+   0.5,
+   0.75
+  ],
+  "uscita.ora": [
+   "17:30",
+   "17:40",
+   "21:55"
+  ]
+ },
+ "specchio": true,
+ "sr_obiettivo": 1.0,
+ "k": 10
+}

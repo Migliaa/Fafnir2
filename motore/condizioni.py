@@ -63,6 +63,8 @@ FAMIGLIE = {
     "dal_massimo_seduta": (lambda: (c - pl.col("dmax")) / ESC, lambda: (pl.col("dmin") - c) / ESC),
     # distanza dal minimo di ieri (3251: non sotto il minimo di ieri, >= 0)
     "dal_minimo_ieri": (lambda: (c - pl.col("l1")) / ESC, lambda: (pl.col("h1") - c) / ESC),
+    # rendimento dalla chiusura di ieri in escursioni (momento intraday, Baltussen et al. 2021)
+    "dal_close_ieri": (lambda: (c - pl.col("c1")) / ESC, lambda: (pl.col("c1") - c) / ESC),
     "gap": (lambda: (pl.col("dopen") - pl.col("c1")) / ESC, lambda: (pl.col("c1") - pl.col("dopen")) / ESC),
     # massimo della barra sopra quello della barra prima (185 oro: +0,5% ~ 0,4 escursioni)
     "rottura_barra": (lambda: (h - h.shift(1)) / ESC, lambda: (l.shift(1) - l) / ESC),

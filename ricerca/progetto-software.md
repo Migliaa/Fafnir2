@@ -64,8 +64,7 @@ motore/
   validazione/   statistiche e controlli contro il sovra-adattamento
   portafoglio/   unione delle liste dei trade, calendario dell'esposizione, drawdown comuni (cantiere 4)
   uscita/        traduzione in ProRealCode con la console e gli interruttori standard
-  cli            comandi per l'IA: accoda, lancia, stato, riassunto JSON, confronto
-  coda           esecuzione notturna degli esperimenti, ripresa dopo interruzione, rapporto del mattino
+  cli            comandi per l'IA: controlla e lancia un esperimento, riassunto JSON
 cruscotto/       pagine HTML locali per Andrea: rapporto del mattino, elenco filtrabile dei candidati, schede e curve
 esperimenti/     un file per ogni idea: ipotesi, meccanismo, fonte, direzione attesa, scritto prima di lanciare; i risultati si aggiungono sotto
 risultati/       uscite degli esperimenti (fuori da git se pesanti): JSON per l'IA, curve e trade per il cruscotto
@@ -101,7 +100,7 @@ Ne seguono due interfacce distinte.
 - ogni risultato esce in due forme: un riassunto compatto in JSON (poche righe di numeri, quello che l'IA legge) e i file completi per il cruscotto (curve, liste dei trade, tabelle), che l'IA non apre;
 - le specifiche degli esperimenti sono file di testo validati dal software (campi obbligatori, budget di prove, date dello schema in-sample/out-of-sample fissate), così l'IA non può lanciare una ricerca che viola le regole di validazione o tocca il fuori campione.
 
-**Coda notturna.** Un programma esegue gli esperimenti in coda uno dopo l'altro, sfruttando i 12 thread, con salvataggi intermedi per riprendere dopo un'interruzione, il PC tenuto sveglio durante il lavoro e un registro degli errori. A fine coda scrive il **rapporto del mattino**: i 10 candidati migliori di tutta la notte, già passati dalle regole di selezione, ordinati secondo la scheda e con la sovrapposizione dei drawdown rispetto ai sistemi in produzione.
+**Coda notturna (fuori dal software, decisione di Andrea del 2026-11-22).** La coda e il rapporto del mattino si gestiscono a parte, in un modulo separato che chiama i comandi della `cli`; il software di ricerca non ne sa niente. Come era stata pensata: un programma esegue gli esperimenti in coda uno dopo l'altro, sfruttando i 12 thread, con salvataggi intermedi per riprendere dopo un'interruzione, il PC tenuto sveglio durante il lavoro e un registro degli errori. A fine coda scrive il **rapporto del mattino**: i 10 candidati migliori di tutta la notte, già passati dalle regole di selezione, ordinati secondo la scheda e con la sovrapposizione dei drawdown rispetto ai sistemi in produzione.
 
 **Cruscotto per Andrea** (`cruscotto/`): pagine HTML locali generate dal software, che si aprono nel browser senza server e senza installare niente:
 - il rapporto del mattino;
@@ -165,7 +164,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 4 | `metriche` e `validazione` (delegabile con specifica) | fatta (2026-11-22), specifica in `spec-fase-4.md` |
 | 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | fatta (2026-11-22): long di 165 DAX e short dell'oro ritrovati, gli altri tre deboli |
 | 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | fatta (2026-11-22), specifica in `spec-fase-6.md` |
-| 7 | `coda` notturna e rapporto del mattino; primi esperimenti: setaccio e trapianti dei modelli 128 e 185 | |
+| 7 | primi esperimenti: long DAX a 5 minuti, poi setaccio e trapianti dei modelli 128 e 185 (coda e rapporto del mattino stanno fuori dal software) | |
 | 8 | `uscita` verso ProRealCode e `portafoglio` (delegabili) | |
 | 9 | `cruscotto` HTML per Andrea (delegabile con specifica) | |
 
