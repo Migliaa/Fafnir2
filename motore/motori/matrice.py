@@ -12,6 +12,7 @@ trade sovrapposti. I sistemi scelti si ricalcolano sempre con il motore degli ev
 """
 from __future__ import annotations
 
+import copy
 import math
 from itertools import combinations
 
@@ -78,10 +79,12 @@ class Matrice:
         apre_us = tab["apre"].dt.epoch("us").to_numpy()
         giorno_data = np.searchsorted(ctx.date, tab["data"].to_numpy().astype("datetime64[D]"))
         self.maschere: dict[str, np.ndarray] = {}
+        self.giorno_riga: dict[str, np.ndarray] = {}    # giorno (indice in ctx.date) di ogni barra di decisione
         self.trade: dict[tuple[str, int], dict] = {}
         for t in orari_:
             cand = np.flatnonzero((tod == _min(t)) & valida).astype(np.int64)
             self.maschere[t] = valori[cand]
+            self.giorno_riga[t] = giorno_data[cand]
             for k, u in enumerate(uscite):
                 ui = _uscite(cand, tod, giorno, dn, -1 if u.get("barre") is None else int(u["barre"]), _min(u.get("ora")),
                              _min(u.get("venerdi")), int(u.get("giorni") or 0))
@@ -97,6 +100,25 @@ class Matrice:
                     "righe": righe, "netto": netto[dentro], "lordo": lordo[dentro],
                     "ore": (apre_us[x] - apre_us[e])[dentro] / 3.6e9, "anno": a[dentro],
                     "giorno": giorno_data[x][dentro]}
+
+    def spostata(self, passo: int) -> "Matrice":
+        """Copia con le condizioni slegate dai risultati (prova sul rumore): ogni giorno prende i valori delle condizioni
+        del giorno `passo` giorni di borsa più avanti (in cerchio), gli stessi per tutti gli orari. I risultati restano
+        quelli veri, compresa la tendenza di ogni orario; resta anche la struttura delle condizioni (periodi agitati,
+        sequenze di giorni), ma non c'è più alcun legame fra le condizioni di un giorno e il suo risultato."""
+        nuova = copy.copy(self)
+        nuova.maschere = {}
+        nd = len(self.ctx.date)
+        for t, m in self.maschere.items():
+            g = self.giorno_riga[t]
+            pos = np.full(nd, -1)
+            pos[g] = np.arange(len(g))
+            src = pos[(g + passo) % nd]
+            mm = np.zeros_like(m)
+            ok = src >= 0
+            mm[ok] = m[src[ok]]
+            nuova.maschere[t] = mm
+        return nuova
 
     # ---- aggregati per anno
     def aggregati(self, t: str, k: int, m: np.ndarray) -> dict:

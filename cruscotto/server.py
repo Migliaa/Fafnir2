@@ -29,6 +29,7 @@ CARTELLA_ESPERIMENTI = RISULTATI / "esperimenti"       # risultati dei lanci
 DEFINIZIONI = RADICE / "esperimenti"                   # file d'esperimento e resoconti
 DECISIONI = RISULTATI / "cruscotto" / "decisioni.json"
 CARTELLA_RICERCHE = RISULTATI / "ricerche"             # risultati di `motore.albero lancia`
+CARTELLA_CAMPAGNE = RISULTATI / "campagne"             # riepiloghi di `motore.campagna lancia`
 STATI = ["da guardare", "da approfondire", "in verifica", "live", "scartato"]
 ESITI_VERIFICA = ["", "confermata", "non confermata", "inconcludente"]
 NOME = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -296,15 +297,26 @@ def api_ricerche() -> list[dict]:
             f, st = d / "ricerca.json", _stato_ricerca(d)
             if f.exists():
                 a = _json(f)
+                if a.get("campagna"):
+                    continue                     # dentro la sua campagna
                 imb = a.get("imbuto") or []
                 out.append({"nome": d.name, "formato": "ricerca", "stato": "finita", "prodotto": a["intestazione"]["prodotto"],
                             "barre": a["intestazione"]["barre"], "quando": a["quando"], "prove": a["prove"], "budget": a["budget"],
                             "ampiezza": imb[0]["n"] if imb else None, "radici": sum(1 for n in a["nodi"] if n.get("livello1")),
                             "finali": len(a["foglie"]), "candidati": sum(x["esito"] == "candidato" for x in a["foglie"]),
                             "ipotesi": a["intestazione"].get("ipotesi")})
-            elif st:
+            elif st and not st.get("campagna") and not any(d.name.startswith(c + "-") for c in _nomi_campagne()):
                 out.append({"nome": d.name, "formato": "ricerca", "stato": st.get("stato"), "quando": st.get("inizio"),
                             "prove": st.get("prove"), "budget": st.get("budget"), "fase": st.get("fase"), "errore": st.get("errore")})
+    for nome in _nomi_campagne():
+        c = api_campagna(nome)
+        r = c["ricerche"]
+        out.append({"nome": nome, "formato": "campagna", "stato": "in corso" if any(x["stato"] != "finita" for x in r) else "finita",
+                    "quando": c["intestazione"].get("quando") or min((x.get("quando") or "9" for x in r), default=""),
+                    "prodotto": ", ".join(c["intestazione"]["prodotti"]), "barre": "/".join(str(b) for b in c["intestazione"]["barre"]),
+                    "ampiezza": None, "radici": None, "prove": sum(x.get("prove") or 0 for x in r), "budget": None,
+                    "ricerche_finite": sum(x["stato"] == "finita" for x in r), "ricerche": len(r),
+                    "candidati": sum(1 for x in c.get("righe") or [] if x.get("esito") == "candidato"), "ipotesi": c["intestazione"].get("ipotesi")})
     for nome in _nomi_esperimenti():
         r = _riassunto(nome)
         ih = r["intestazione"]
@@ -327,8 +339,48 @@ def api_ricerca(nome: str) -> dict:
         return {"nome": nome, "in_corso": True, **st}
     a = _json(f)
     a["nome"] = nome
+    from motore import uscita                   # codice sempre dal traduttore attuale (anche per ricerche vecchie)
+    for fo in a.get("foglie", []):
+        try:
+            fo["prorealcode"] = uscita.traduci(fo["regola"], a["intestazione"]["prodotto"], a["intestazione"]["barre"])
+        except (KeyError, ValueError):
+            pass
     a["soglie_guadagno"] = [[None if math.isinf(x) else x, e] for x, e in giudizio.SOGLIE_GUADAGNO]
     return a
+
+
+def _nomi_campagne() -> list[str]:
+    if not CARTELLA_CAMPAGNE.exists():
+        return []
+    return sorted(d.name for d in CARTELLA_CAMPAGNE.iterdir() if (d / "spec.json").exists())
+
+
+def api_campagna(nome: str) -> dict:
+    """Specifica, stato di ogni ricerca (anche mentre la campagna gira) e, a campagna finita, il riepilogo dei finali."""
+    if not NOME.match(nome) or not (CARTELLA_CAMPAGNE / nome / "spec.json").exists():
+        raise NonTrovato(nome)
+    from motore import campagna
+    spec = _json(CARTELLA_CAMPAGNE / nome / "spec.json")
+    ricerche = []
+    for r in campagna.ricerche(spec):
+        d = CARTELLA_RICERCHE / r["nome"]
+        x = {"nome": r["nome"], "prodotto": r["prodotto"], "lato": r["lato"], "barre": r["barre"], "stato": "da fare"}
+        if (d / "ricerca.json").exists():
+            a = _json(d / "ricerca.json")
+            imb = {i["strato"]: i["n"] for i in a.get("imbuto", [])}
+            wf = a.get("walkforward_ricerca") or {}
+            rum = a.get("rumore") or {}
+            x.update({"stato": "finita", "quando": a["quando"], "prove": a["prove"], "forza_bruta": imb.get("forza"), "finali": imb.get("filtro3"),
+                      "candidati": sum(f["esito"] == "candidato" for f in a["foglie"]),
+                      "wf_euro": None if wf.get("media_esc") is None else wf["media_esc"] * (a.get("euro_per_escursione_oggi") or 0),
+                      "rumore_migliore": max((g["migliore"] for g in rum.get("giri", [])), default=None),
+                      "vero_migliore": max((f.get("punteggio") or 0 for f in rum.get("finali_veri", [])), default=None)})
+        elif (d / "stato.json").exists():
+            st = _json(d / "stato.json")
+            x.update({"stato": st.get("stato"), "quando": st.get("inizio"), "prove": st.get("prove"), "fase": st.get("fase"), "errore": st.get("errore")})
+        ricerche.append(x)
+    f = CARTELLA_CAMPAGNE / nome / "campagna.json"
+    return {"nome": nome, "intestazione": spec, "ricerche": ricerche, "righe": _json(f)["righe"] if f.exists() else None}
 
 
 _VERSIONE: dict = {}
@@ -474,6 +526,8 @@ class Gestore(BaseHTTPRequestHandler):
             return api_ricerche()
         if len(p) == 2 and p[0] == "ricerche":
             return api_ricerca(p[1])
+        if len(p) == 2 and p[0] == "campagne":
+            return api_campagna(p[1])
         if p == ["versione"]:
             return api_versione()
         if p == ["registro"]:

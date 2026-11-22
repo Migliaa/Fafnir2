@@ -1,0 +1,40 @@
+{
+ "tipo": "campagna",
+ "nome": "forex-cicli-1",
+ "ipotesi": "Forza bruta sui 6 cambi più economici di IG, long e short, a 15 e 30 minuti: ogni orario, ogni uscita, ogni pattern della libreria; poi le combinazioni dei migliori con indicatori, candele, regime e calendario.",
+ "meccanismo": "Orari ricorrenti nei cambi (aperture di Tokyo, Londra e New York, fixing delle 17:00 di Londra, chiusura di New York) e condizioni di mercato che li rafforzano; il meccanismo di ogni sistema finale si scrive dopo, guardando quali pattern lo compongono.",
+ "fonte": "librerie di pattern di Andrea riscritte in motore/pattern.py; spread IG medi in fonti/prodotti/costi-ig.md",
+ "prodotti": ["EC", "AD", "JY", "BP", "EURGBP", "CD"],
+ "lati": [1, -1],
+ "barre": [15, 30],
+ "orari": {"da": "00:00", "a": "23:45"},
+ "uscite": {
+  "15": [
+   {"nome": "esce dopo 1 ora", "barre": 2},
+   {"nome": "esce dopo 2 ore", "barre": 6},
+   {"nome": "esce dopo 4 ore", "barre": 14},
+   {"nome": "esce dopo 8 ore", "barre": 30},
+   {"nome": "esce alle 17:30", "ora": "17:30"},
+   {"nome": "esce alle 22:00", "ora": "22:00"},
+   {"nome": "esce il giorno dopo all'apertura", "giorni": 1},
+   {"nome": "esce dopo 2 giorni", "giorni": 2}
+  ],
+  "30": [
+   {"nome": "esce dopo 1 ora", "barre": 0},
+   {"nome": "esce dopo 2 ore", "barre": 2},
+   {"nome": "esce dopo 4 ore", "barre": 6},
+   {"nome": "esce dopo 8 ore", "barre": 14},
+   {"nome": "esce alle 17:30", "ora": "17:30"},
+   {"nome": "esce alle 22:00", "ora": "22:00"},
+   {"nome": "esce il giorno dopo all'apertura", "giorni": 1},
+   {"nome": "esce dopo 2 giorni", "giorni": 2}
+  ]
+ },
+ "cicli": {"semi_1": 300, "semi_2": 100, "finali": 12, "correlazione_semi": 0.9, "correlazione_max": 0.7, "margine_semi": 1.0},
+ "rumore": {"ripetizioni": 50},
+ "uscite_finali": [
+  {"nome": "stop 0,5 escursioni", "stop": 0.5},
+  {"nome": "stop 1 escursione", "stop": 1.0}
+ ],
+ "lavoratori": 6
+}

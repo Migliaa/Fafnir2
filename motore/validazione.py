@@ -7,7 +7,10 @@ from __future__ import annotations
 
 import json
 import math
+import os
 import re
+import time
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from itertools import combinations
 
@@ -336,7 +339,43 @@ def _scrivi_righe(righe: list[dict]) -> None:
     tmp.replace(CARTELLA / "tentativi.jsonl")
 
 
+@contextmanager
+def _blocco(attesa_s: float = 300.0):
+    """Un processo alla volta nel registro (le ricerche di una campagna girano in parallelo): file di blocco creato
+    in modo esclusivo; un blocco più vecchio di 10 minuti è di un processo morto e si toglie."""
+    CARTELLA.mkdir(parents=True, exist_ok=True)
+    f = CARTELLA / "registro.lock"
+    t0 = time.time()
+    while True:
+        try:
+            fd = os.open(f, os.O_CREAT | os.O_EXCL | os.O_WRONLY)
+            break
+        except FileExistsError:
+            try:
+                if time.time() - f.stat().st_mtime > 600:
+                    f.unlink()
+                    continue
+            except FileNotFoundError:
+                continue
+            if time.time() - t0 > attesa_s:
+                raise TimeoutError("registro bloccato da un altro processo")
+            time.sleep(0.2)
+    try:
+        yield
+    finally:
+        os.close(fd)
+        try:
+            f.unlink()
+        except FileNotFoundError:
+            pass
+
+
 def registra_molti(esperimento: str, famiglia: str, prodotto: str, prove: list, date) -> list[str]:
+    with _blocco():
+        return _registra_molti(esperimento, famiglia, prodotto, prove, date)
+
+
+def _registra_molti(esperimento: str, famiglia: str, prodotto: str, prove: list, date) -> list[str]:
     """Registra molti tentativi della stessa famiglia e dello stesso prodotto con una sola scrittura per file.
 
     `prove` è la lista di (parametri, serie giornaliera); `date` le date comuni. Aggiunge le righe a
@@ -378,6 +417,11 @@ def holdout_usato(id_: str) -> dict | None:
 
 def segna_holdout(id_: str, info: dict) -> None:
     """Segna che il tentativo ha consumato la prova finale (campo `holdout_usato`). Una volta sola."""
+    with _blocco():
+        _segna_holdout(id_, info)
+
+
+def _segna_holdout(id_: str, info: dict) -> None:
     righe = _righe()
     trovato = [r for r in righe if r["id"] == id_]
     if not trovato:

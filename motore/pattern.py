@@ -123,9 +123,37 @@ def dello_strato(strato: int) -> list[tuple]:
     return [p for p in PATTERN if p[2] == strato]
 
 
-def nome(cond: list) -> str:
-    """Nome leggibile di una condizione della libreria (o la condizione scritta per esteso)."""
-    return NOMI.get(tuple(cond[:3]), f"{cond[0]} {cond[1]} {cond[2]}")
+_SCAMBI = [("in su", "in giù"), ("su di", "giù di"), ("rialzista", "ribassista"), ("rialzo", "ribasso"), ("sopra", "sotto"),
+           ("massimi", "minimi"), ("massimo", "minimo"), ("alti", "bassi"), ("alto", "basso"), ("alta", "bassa"),
+           ("barra verde", "barra rossa"), ("verde", "rosso"), ("risalito", "sceso"), ("superato", "rotto")]
+_MAPPA = {**{a: b for a, b in _SCAMBI}, **{b: a for a, b in _SCAMBI}}
+_RE = None
+
+
+def _specchia_testo(t: str) -> str:
+    """Scambia le parole di direzione (sopra/sotto, massimo/minimo, rialzo/ribasso...) in un solo passaggio."""
+    import re
+    global _RE
+    if _RE is None:
+        _RE = re.compile("|".join(sorted((re.escape(k) for k in _MAPPA), key=len, reverse=True)))
+    return _RE.sub(lambda m: _MAPPA[m.group(0)], t)
+
+
+def nome(cond: list, lato: int = 1) -> str:
+    """Nome leggibile di una condizione della libreria (o la condizione scritta per esteso). Per lo short la condizione
+    usa la grandezza speculare: il nome si scrive di conseguenza (le grandezze uguali per i due lati non cambiano)."""
+    base = NOMI.get(tuple(cond[:3]), f"{cond[0]} {cond[1]} {cond[2]}")
+    if lato > 0:
+        return base
+    from . import condizioni
+    fam = famiglia(cond)
+    f = condizioni.FAMIGLIE.get(fam)
+    if f is None or f[0] is f[1]:
+        return base
+    if fam == "rsi":
+        n = cond[0].split(":")[1] if ":" in cond[0] else "2"
+        return f"RSI {n} {'sopra' if cond[1] in ('<', '<=') else 'sotto'} {100 - cond[2]:g}"
+    return _specchia_testo(base)
 
 
 def famiglia(cond: list) -> str:

@@ -154,6 +154,16 @@ I 12 finali, in-sample, sono quello che Andrea cerca: 28-47 € a trade con la v
 
 Due finali perdono anche sull'Euro Stoxx. Il quadro è quello noto della ricerca a forza bruta (Bailey et al. 2014; Harvey, Liu 2015): con decine di migliaia di prove escono sempre regole con curve belle, e la prova che conta è se la procedura che le sceglie funziona sugli anni che non ha visto. Sul DAX long a 5 minuti, con questa libreria, non funziona.
 
+## Prova sul rumore e campagne (2026-11-22)
+
+**Prova sul rumore.** La ricerca a cicli si rifà più volte (50 nella prima campagna) su dati in cui le condizioni sono slegate dai risultati: ogni giorno prende i valori delle condizioni di un giorno lontano almeno un anno (spostamento in cerchio, uguale per tutti gli orari). I risultati restano quelli veri, compresa la tendenza di ogni orario e del prodotto, e restano le sequenze delle condizioni (periodi agitati, giorni di fila), ma un giorno non "sa" più niente del suo risultato. Il finale migliore di ogni giro dice quanto di bello esce dalla ricerca per caso. Un finale vero passa se il rumore fa altrettanto in al massimo il 5% dei giri: `p = (1 + giri con un migliore >= punteggio) / (1 + giri)`.
+
+Per essere valida, la prova deve rifare tutta la selezione (forza bruta, filtri, moltiplicazioni), perché la fortuna si accumula a ogni passo: una prova solo sui finali ("questa regola batte giorni scelti a caso?") risponde a un'altra domanda, già coperta dai filtri a caso del filtro 2. È **mirata** in due modi: si fa solo se la ricerca vera ha dei finali dopo il filtro 3 (altrimenti non c'è niente da confrontare), e rifà solo i cicli, senza walk-forward, ricalcolo esatto e prova finale. Un giro costa circa 20 secondi a 15 minuti.
+
+**Campagna** (`motore/campagna.py`, `"tipo": "campagna"`): una ricerca a cicli per ogni prodotto, lato e timeframe, in parallelo su più processi, con la prova sul rumore; riprende da dove era se si interrompe. Il riepilogo mette insieme i finali di tutte le ricerche e prova ognuno, con la stessa regola, sugli altri prodotti della campagna: quante altre valute guadagnano negli stessi anni.
+
+Prima campagna `forex-cicli-1`: EUR/USD, AUD/USD, USD/JPY, GBP/USD, EUR/GBP, USD/CAD (i sei con lo spread IG più basso, AUD/JPY escluso perché Andrea lo ha già in reale con il 128), long e short, barre da 15 e 30 minuti, 8 uscite, 691.200 regole nella forza bruta. Valore del punto: contratto mini IG da 10.000 unità, convertito in euro a un cambio tipico del 2023-2025 (stima, in `motore/catalogo.py`). USD/JPY e USD/CAD nei dati sono quotati al contrario di IG: un long sui dati è uno short su IG con le condizioni speculari, e il codice ProRealCode viene scritto così.
+
 ## Nel software
 
 - `motore/ricerca.py`: `python -m motore.ricerca controlla|lancia <file>` per le ricerche a cicli; `motore/albero.py`: `python -m motore.albero controlla|lancia <file>` per le radici date a mano; risultati in `risultati/ricerche/<nome>/ricerca.json`, avanzamento in `stato.json`, diario dei passi nel risultato; una ricerca già lanciata non si rilancia (la prova finale si usa una volta). Test in `motore/test_albero.py`.

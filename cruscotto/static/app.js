@@ -503,11 +503,12 @@ async function paginaRicerche() {
   const mio = giro;
   const l = await api('/ricerche');
   const riga = r => {
-    const vai = () => { location.hash = r.formato === 'esperimento' ? '#/esperimenti/' + r.nome : '#/ricerche/' + r.nome; };
-    const stato = r.stato === 'in corso' ? h('span', { class: 'badge giallo' }, `in corso · ${r.prove || 0} prove`) : r.stato === 'fallita' ? h('span', { class: 'badge rosso' }, 'fallita')
+    const vai = () => { location.hash = r.formato === 'esperimento' ? '#/esperimenti/' + r.nome : r.formato === 'campagna' ? '#/campagne/' + r.nome : '#/ricerche/' + r.nome; };
+    const stato = r.formato === 'campagna' && r.stato === 'in corso' ? h('span', { class: 'badge giallo' }, `in corso · ${r.ricerche_finite} di ${r.ricerche} ricerche`)
+      : r.stato === 'in corso' ? h('span', { class: 'badge giallo' }, `in corso · ${r.prove || 0} prove`) : r.stato === 'fallita' ? h('span', { class: 'badge rosso' }, 'fallita')
       : r.candidati ? h('span', { class: 'badge candidato' }, `${r.candidati} da provare`) : h('span', { class: 'badge non_giudicato' }, 'nessun sistema');
-    return h('tr', { class: 'clic', onclick: vai }, h('td', { class: 'sx desc' }, h('strong', {}, r.nome), h('div', { class: 'muto' }, r.formato === 'esperimento' ? 'formato precedente: solo ampiezza, in-sample 2011-2023' : (r.ipotesi || '').slice(0, 110) + ((r.ipotesi || '').length > 110 ? '…' : ''))),
-      h('td', {}, dataIt(r.quando)), h('td', {}, r.prodotto ? `${r.prodotto} ${r.barre} min` : '–'), h('td', {}, r.ampiezza ?? '–'), h('td', {}, r.radici ?? '–'), h('td', {}, r.prove ?? '–'), h('td', {}, stato));
+    return h('tr', { class: 'clic', onclick: vai }, h('td', { class: 'sx desc' }, h('strong', {}, r.nome), h('div', { class: 'muto' }, r.formato === 'campagna' ? `campagna di ${r.ricerche} ricerche · ` + (r.ipotesi || '').slice(0, 90) + '…' : r.formato === 'esperimento' ? 'formato precedente: solo ampiezza, in-sample 2011-2023' : (r.ipotesi || '').slice(0, 110) + ((r.ipotesi || '').length > 110 ? '…' : ''))),
+      h('td', {}, dataIt(r.quando)), h('td', { class: 'desc' }, r.prodotto ? `${r.prodotto} · ${r.barre} min` : '–'), h('td', {}, r.ampiezza == null ? '–' : nf(r.ampiezza, 0)), h('td', {}, r.radici ?? '–'), h('td', {}, r.prove == null ? '–' : nf(r.prove, 0)), h('td', {}, stato));
   };
   vedi(mio, h('h1', {}, 'Ricerche'),
     h('p', { class: 'muto' }, 'Ogni ricerca prova molte regole semplici, approfondisce le migliori e mostra solo i sistemi che superano tutti i filtri. Come funziona: ', h('a', { href: '#/come-funziona' }, 'qui'), '.'),
@@ -531,7 +532,7 @@ function imbutoSVG(imb) {
   });
   return svg;
 }
-const MOTIVI_CHIARI = [[/^Pronto|^Guadagno medio in euro/, 'guadagnano troppo poco a trade, anche tenendo solo i trade migliori'], [/^t del guadagno/, 'guadagno medio non distinguibile dal caso'],
+const MOTIVI_CHIARI = [[/^Batte la ricerca sul rumore/, 'la ricerca sul rumore fa altrettanto bene'], [/^Pronto|^Guadagno medio in euro/, 'guadagnano troppo poco a trade, anche tenendo solo i trade migliori'], [/^t del guadagno/, 'guadagno medio non distinguibile dal caso'],
   [/^Trade l'anno/, "troppo pochi trade l'anno"], [/^Mediana fuori campione/, 'perdono sugli anni lasciati fuori'], [/^Gemello/, "perdono sull'Euro Stoxx con la stessa regola"],
   [/^Metà/, 'perdono in una delle due metà del periodo'], [/^Segnale|^D1|^D2/, "il guadagno viene dall'ora o dalla salita del DAX, non dalla regola"],
   [/^Batte i filtri/, 'non battono i filtri a caso'], [/^Migliora il genitore|^Soglie vicine|^I trade tolti/, 'non migliorano davvero la regola di partenza'],
@@ -613,6 +614,7 @@ async function paginaRicerca(nome) {
     h('div', { class: 'pannello' }, risultato, h('div', { class: 'imbuto-riga' }, a.imbuto ? imbutoSVG(a.imbuto) : null, perche(a)),
       h('p', { class: 'muto' }, 'La lunghezza delle barre è in scala logaritmica. ', h('a', { href: '#/come-funziona' }, 'Cosa fa ogni strato'))),
     a.walkforward_ricerca ? wfGrafico(a) : null,
+    a.rumore ? rumoreGrafico(a.rumore) : null,
     cand.length ? h('div', {}, h('h2', {}, 'Da provare su ProRealTime'), listaFoglie(a, cand)) : null,
     altre.length ? h('div', {}, h('h2', {}, cand.length ? 'Gli altri sistemi finali, scartati' : 'I sistemi finali, scartati dalla verifica'), listaFoglie(a, altre)) : null,
     !a.foglie.length ? h('div', {}, h('h2', {}, 'Le regole arrivate più vicine'), h('p', { class: 'muto' }, 'Le dieci con il margine più alto. Nessuna arriva in fondo; servono a capire quanto manca.'), vicini(a)) : null,
@@ -637,13 +639,13 @@ function miniDaCurva(c) {
   const seg = (c.segmenti || []).map(([p, i0, i1]) => [p, pos.findIndex(i => i >= i0), Math.max(0, pos.findIndex(i => i >= i1))]);
   return { y: idx.map(i => c.cum[i]), segmenti: seg.map(([p, a, b]) => [p, a < 0 ? 0 : a, b < 0 ? idx.length - 1 : b]) };
 }
-const BREVI = [[/^DSR/, 'conto delle prove'], [/^Walk-forward/, 'anno per anno'], [/^Gemello/, 'Euro Stoxx'], [/^Guadagno medio/, '€ a trade'], [/^Trade l/, 'pochi trade'],
+const BREVI = [[/^Batte la ricerca sul rumore/, 'rumore'], [/^DSR/, 'conto delle prove'], [/^Walk-forward/, 'anno per anno'], [/^Gemello/, 'Euro Stoxx'], [/^Guadagno medio/, '€ a trade'], [/^Trade l/, 'pochi trade'],
   [/^Regolarità/, 'curva'], [/^Anni positivi/, 'anni positivi'], [/^Costi doppi/, 'costi doppi'], [/^Segnale|^D1|^D2/, 'segnale isolato'], [/^t del/, 'caso'], [/^Utile fuori|^Guadagno medio fuori|^Fuori campione/, '2024-2025']];
 const breve = n => { const x = BREVI.find(([re]) => re.test(n)); return x ? x[1] : n; };
 function listaFoglie(a, foglie) {
   const col = [['', ''], ['Sistema', 'sx'], ['€ a trade', '', 'Guadagno medio netto con la volatilità del 2023, 1 CFD IG; in verde se supera la soglia per la sua durata'],
     ['Trade l’anno'], ['Ore', '', 'Ore medie in posizione'], ['R²', '', 'Regolarità della curva'], ['Drawdown', '', 'In euro di oggi'], ['Utile/DD'],
-    ['t', '', 'Quanto il guadagno medio è lontano dal caso'], ['Anno per anno', '', 'Ricerca rifatta con i soli anni precedenti: quanto vale fuori campione rispetto all\'in-sample (serve almeno 0,5)'], ['Esito', 'sx']];
+    ['t', '', 'Quanto il guadagno medio è lontano dal caso'], ['Rumore', '', 'Quota di ricerche sul rumore che producono un finale migliore di questo: serve al massimo 5%'], ['Anno per anno', '', 'Ricerca rifatta con i soli anni precedenti: quanto vale fuori campione rispetto all\'in-sample (serve almeno 0,5)'], ['Esito', 'sx']];
   const righe = [];
   foglie.forEach(f => {
     const m = f.misure_minuto || {}, ko = [...(f.porte || []), ...(f.voci_prova_finale || [])].filter(p => p.esito === 'rosso' || p.esito === 'grigio').map(p => breve(p.nome));
@@ -655,6 +657,7 @@ function listaFoglie(a, foglie) {
       h('td', { class: (m.G || 0) >= 1 ? 'pos' : 'neg' }, nE(m.euro_oggi)),
       h('td', { class: (m.trade_anno || 0) >= 8 ? '' : 'neg' }, nf(m.trade_anno, 0)), h('td', {}, nf(m.ore_medie, 1)),
       h('td', { class: (m.r2 || 0) >= 0.85 ? '' : 'neg' }, nf(m.r2, 2)), h('td', {}, nE(m.dd_euro_oggi, 0)), h('td', {}, nf(m.utile_su_dd, 1)), h('td', {}, nf(m.t, 1)),
+      (() => { const pr = (f.porte || []).find(p => p.nome.startsWith('Batte la ricerca sul rumore')); return h('td', { class: pr ? (pr.esito === 'verde' ? 'pos' : 'neg') : '' }, pr && pr.valore != null ? pc(pr.valore) : '–'); })(),
       h('td', { class: (f.efficienza_wf ?? -1) >= 0.5 ? 'pos' : 'neg' }, nf(f.efficienza_wf, 2)),
       h('td', { class: 'sx esito-td', title: f.motivo || '' }, badge(f.esito), ' ', h('span', { class: 'muto' }, f.esito === 'candidato' ? '' : ko.join(', '))));
     righe.push(riga, det);
@@ -678,10 +681,55 @@ function wfGrafico(a) {
       sv('text', { x: x + bw * 0.32, y: H - m.b + 27, 'text-anchor': 'middle', style: 'font-size:10px;fill:var(--muto)' }, `${nf(v[i], 0)} €`));
   });
   const tot = wf.media_esc == null ? null : wf.media_esc * e;
-  const ins = a.foglie.length ? a.foglie.reduce((x, f) => x + ((f.misure_minuto || {}).euro_oggi || 0), 0) / a.foglie.length : null;
+  const ins = a.foglie && a.foglie.length ? a.foglie.reduce((x, f) => x + ((f.misure_minuto || {}).euro_oggi || 0), 0) / a.foglie.length : null;
   return h('div', { class: 'pannello wf-box' }, h('div', {}, h('div', { class: 'et' }, 'La stessa ricerca rifatta anno per anno, con i soli anni prima'),
     h('p', { class: 'muto' }, `Ogni anno dal 2017 la ricerca intera si rifà con gli anni precedenti e i finali che sceglie si guardano nell'anno dopo, che non hanno visto. In tutto ${wf.n} trade, ${tot == null ? '–' : nf(tot, 1) + ' €'} a trade` +
       (ins != null ? `, contro ${nf(ins, 0)} € a trade in media dei finali in-sample.` : '.'))), svg);
+}
+/* Prova sul rumore: per ogni ricerca sul rumore il punteggio del finale migliore (pallini grigi), e i finali veri (barre). */
+function rumoreGrafico(r) {
+  const giri = r.giri || [], veri = r.finali_veri || [];
+  if (!giri.length) return null;
+  const W = 560, H = 120, m = { l: 12, r: 12, t: 16, b: 30 };
+  const tutti = [...giri.map(g => g.migliore), ...veri.map(v => v.punteggio)], hi = Math.max(...tutti, 0.01);
+  const X = v => m.l + (W - m.l - m.r) * v / hi;
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'wf-svg', role: 'img', 'aria-label': 'Punteggi dei finali: veri e sul rumore' });
+  svg.append(sv('line', { x1: m.l, x2: W - m.r, y1: H - m.b, y2: H - m.b, style: 'stroke:var(--bordo)' }));
+  giri.forEach((g, i) => svg.append(sv('circle', { cx: X(g.migliore), cy: H - m.b - 8 - (i % 5) * 7, r: 3.2, style: 'fill:var(--muto);opacity:.75' }, sv('title', {}, `rumore: finale migliore ${nf(g.migliore, 2)}, ${g.finali} finali`))));
+  veri.forEach(v => svg.append(sv('line', { x1: X(v.punteggio), x2: X(v.punteggio), y1: m.t, y2: H - m.b, style: `stroke:${v.p <= 0.05 ? 'var(--verde)' : 'var(--f-wf)'};stroke-width:2` }, sv('title', {}, `${v.etichetta}: punteggio ${nf(v.punteggio, 2)}, il rumore fa meglio nel ${pc(v.p)} dei casi`))));
+  svg.append(sv('text', { x: m.l, y: H - 10, style: 'font-size:11px;fill:var(--muto)' }, '0'), sv('text', { x: W - m.r, y: H - 10, 'text-anchor': 'end', style: 'font-size:11px;fill:var(--muto)' }, `punteggio ${nf(hi, 2)}`));
+  const battono = veri.filter(v => v.p <= 0.05).length, conFinali = giri.filter(g => g.finali > 0).length;
+  return h('div', { class: 'pannello wf-box' }, h('div', {}, h('div', { class: 'et' }, `Prova sul rumore: la stessa ricerca ${giri.length} volte con le condizioni slegate dai risultati`),
+    h('p', { class: 'muto' }, `Pallini grigi: il finale migliore di ogni ricerca sul rumore (${conFinali} su ${giri.length} trovano dei finali). Linee: i finali veri, in verde quelli che il rumore batte al massimo nel 5% dei casi: ${battono} su ${veri.length}. Il punteggio è guadagno rispetto alla soglia × regolarità × distanza dal caso.`)), svg);
+}
+/* Campagna: avanzamento, tutte le ricerche, tutti i finali in una tabella. */
+const NOMI_PRODOTTI = { EC: 'EUR/USD', AD: 'AUD/USD', BP: 'GBP/USD', JY: 'USD/JPY rovesciato', CD: 'USD/CAD rovesciato', SF: 'USD/CHF rovesciato', NE1: 'NZD/USD', FDAX: 'DAX', FESX: 'Euro Stoxx' };
+const nomeProd = p => NOMI_PRODOTTI[p] ? `${NOMI_PRODOTTI[p]}` : p;
+async function paginaCampagna(nome) {
+  const mio = giro;
+  const c = await api('/campagne/' + nome), ih = c.intestazione, r = c.ricerche;
+  const finite = r.filter(x => x.stato === 'finita').length;
+  const ric = h('div', { class: 'tabella-cont' }, h('table', { class: 'compatta' }, h('thead', {}, h('tr', {}, [['Ricerca', 'sx'], ['Stato'], ['Forza bruta'], ['Finali'], ['Anno per anno', '', 'Guadagno a trade dei finali scelti ogni anno con i soli anni prima'], ['Rumore', '', 'Punteggio del finale migliore sul rumore e di quello vero'], ['Da provare']].map(([t, cl, ti]) => h('th', { class: cl || null, title: ti || null }, t)))),
+    h('tbody', {}, r.map(x => h('tr', { class: x.stato === 'finita' ? 'clic' : '', onclick: () => { if (x.stato === 'finita') location.hash = '#/ricerche/' + x.nome; } },
+      h('td', { class: 'sx' }, `${nomeProd(x.prodotto)} · ${x.lato > 0 ? 'long' : 'short'} · ${x.barre} min`), h('td', {}, x.stato === 'finita' ? 'finita' : x.stato === 'in corso' ? h('span', { title: x.fase || '' }, 'in corso') : x.stato === 'fallita' ? h('span', { class: 'neg', title: x.errore || '' }, 'fallita') : h('span', { class: 'muto' }, 'da fare')),
+      h('td', {}, x.forza_bruta == null ? '–' : nf(x.forza_bruta, 0)), h('td', {}, x.finali ?? '–'), h('td', { class: segno(x.wf_euro) }, x.wf_euro == null ? '–' : nE(x.wf_euro)),
+      h('td', {}, x.rumore_migliore == null ? '–' : `${nf(x.vero_migliore, 2)} contro ${nf(x.rumore_migliore, 2)}`), h('td', { class: x.candidati ? 'pos' : '' }, x.candidati ?? '–'))))));
+  let finali = null;
+  if (c.righe) {
+    const l = c.righe.filter(x => x.sistema).sort((a, b) => (b.esito === 'candidato') - (a.esito === 'candidato') || (a.p_rumore ?? 1) - (b.p_rumore ?? 1) || (b.euro_oggi || 0) - (a.euro_oggi || 0));
+    finali = h('div', { class: 'tabella-cont' }, h('table', { class: 'compatta' }, h('thead', {}, h('tr', {}, [['', ''], ['Sistema', 'sx'], ['Prodotto'], ['€ a trade'], ['Trade l’anno'], ['R²'], ['t'], ['Rumore', '', 'Quota di ricerche sul rumore con un finale migliore'], ['Altre valute', '', 'Su quante delle altre valute della campagna la stessa regola guadagna, negli stessi anni'], ['Anno per anno'], ['Esito', 'sx']].map(([t, cl, ti]) => h('th', { class: cl || null, title: ti || null }, t)))),
+      h('tbody', {}, l.map(x => h('tr', { class: 'clic', onclick: () => { location.hash = '#/ricerche/' + x.ricerca; } }, h('td', { class: 'mini-td' }, miniGrafico({ y: x.mini }, 48)),
+        h('td', { class: 'sx desc' }, x.sistema), h('td', {}, `${nomeProd(x.prodotto)} ${x.barre}m`), h('td', {}, nE(x.euro_oggi)), h('td', { class: (x.trade_anno || 0) >= 8 ? '' : 'neg' }, nf(x.trade_anno, 0)), h('td', {}, nf(x.r2, 2)), h('td', {}, nf(x.t, 1)),
+        h('td', { class: x.p_rumore == null ? '' : x.p_rumore <= 0.05 ? 'pos' : 'neg' }, x.p_rumore == null ? '–' : pc(x.p_rumore)), h('td', { class: x.conferme >= Math.ceil(x.su / 2) ? 'pos' : '' }, `${x.conferme} su ${x.su}`),
+        h('td', { class: (x.efficienza_wf ?? -1) >= 0.5 ? 'pos' : 'neg' }, nf(x.efficienza_wf, 2)), h('td', { class: 'sx esito-td' }, badge(x.esito)))))));
+  }
+  vedi(mio, h('p', {}, h('a', { href: '#/ricerche' }, '← Ricerche')), h('h1', {}, nome),
+    h('p', { class: 'muto' }, `${ih.prodotti.map(nomeProd).join(', ')} · ${ih.lati.map(l => l > 0 ? 'long' : 'short').join(' e ')} · barre da ${ih.barre.join(' e ')} minuti · prova sul rumore ${(ih.rumore || {}).ripetizioni || 0} volte · ${finite} di ${r.length} ricerche finite`),
+    h('div', { class: 'barra' }, h('div', { style: `width:${100 * finite / r.length}%` })),
+    ih.prodotti.some(p => /rovesciato/.test(NOMI_PRODOTTI[p] || '')) ? h('p', { class: 'muto' }, 'USD/JPY e USD/CAD nei dati sono quotati al contrario di IG (yen per dollaro, dollari per dollaro canadese): un long su questi dati è uno short su IG con le condizioni speculari; il codice ProRealCode lo scrive già così.') : null,
+    finali ? h('div', {}, h('h2', {}, 'Tutti i finali della campagna'), finali) : h('p', { class: 'muto' }, 'La tabella con tutti i finali compare a campagna finita.'),
+    h('h2', {}, 'Le ricerche'), ric);
+  if (finite < r.length) setTimeout(() => { if (mio === giro) render(); }, 15000);
 }
 function tabellaRegole(l) {
   return h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, [['', ''], ['Regola', 'sx'], ['€ a trade', '', 'Con la volatilità di oggi, 1 CFD IG, netto'], ['Trade l’anno'], ['Ore'], ['t'], ['R²'], ['Batte il caso', '', 'Quota di filtri a caso che toglierebbero la stessa quota di trade al genitore e farebbero peggio']].map(([t, c, ti]) => h('th', { class: c || null, title: ti || null }, t)))),
@@ -959,7 +1007,7 @@ function paginaPortafoglio() {
 }
 
 // ------------------------------------------------------------------ router
-const ROTTE = [[/^\/ricerche$/, paginaRicerche], [/^\/ricerche\/([^/]+)$/, paginaRicerca], [/^\/come-funziona$/, paginaComeFunziona],
+const ROTTE = [[/^\/ricerche$/, paginaRicerche], [/^\/ricerche\/([^/]+)$/, paginaRicerca], [/^\/come-funziona$/, paginaComeFunziona], [/^\/campagne\/([^/]+)$/, paginaCampagna],
   [/^\/sistemi\/([^/]+)\/([^/]+)(?:\/[a-z]+)?$/, paginaScheda], [/^\/esperimenti\/([^/]+)$/, paginaEsperimento],
   [/^\/registro$/, paginaRegistro], [/^\/portafoglio$/, paginaPortafoglio]];
 async function render() {

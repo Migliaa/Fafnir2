@@ -125,8 +125,16 @@ def _grandezza(nome: str, lato: int):
         return None, False
 
 
+# futures quotati al contrario di IG: sui dati il prezzo è 1 / quello di IG, quindi un long sui dati è uno short su IG
+# con le condizioni speculari (i massimi diventano minimi). Le soglie in escursioni restano valide in prima approssimazione.
+ROVESCIATI = {"JY": "USD/JPY", "CD": "USD/CAD", "SF": "USD/CHF"}
+
+
 def traduci(regola: dict, prodotto: str, barre: int) -> dict:
     """{"codice": str, "completo": bool, "da_tradurre": [str]}."""
+    if prodotto in ROVESCIATI:
+        r = traduci(condizioni.specchia(regola), f"{ROVESCIATI[prodotto]} (dai dati {prodotto}, lato e condizioni rovesciati)", barre)
+        return r
     lato = int(regola["lato"])
     da_tradurre: list[str] = []
     u = regola.get("uscita") or {}

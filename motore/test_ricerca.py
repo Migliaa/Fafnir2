@@ -156,6 +156,37 @@ def test_libreria_dei_pattern():
     assert pattern.nome(["gap", ">=", 0.25]) == "gap in su di almeno 0,25 escursioni"
 
 
+def test_rumore_slega_le_condizioni():
+    with _Ambiente():
+        ctx = _contesto()
+        mx = MX.Matrice(ctx, MX.orari("08:00", "12:00", 60), USCITE, [p[3] for p in pattern.PATTERN])
+        t = "10:00"
+        assert np.array_equal(mx.spostata(0).maschere[t], mx.maschere[t])
+        sp = mx.spostata(300)
+        g = mx.giorno_riga[t]
+        nd = len(ctx.date)
+        pos = {d: i for i, d in enumerate(g)}
+        for r in range(0, len(g), 37):                                  # ogni giorno prende le condizioni di 300 giorni dopo
+            src = pos.get((g[r] + 300) % nd)
+            atteso = mx.maschere[t][src] if src is not None else np.zeros(mx.maschere[t].shape[1], bool)
+            assert np.array_equal(sp.maschere[t][r], atteso)
+        assert sp.trade is mx.trade                                     # i risultati restano quelli veri
+        c = R.Cicli(mx, {"semi_1": 3, "semi_2": 2, "finali": 2, "margine_semi": 0.0}, log=lambda *a: None)
+        c.forza_bruta()
+        rum = c.rumore(3, seme=1)
+        assert len(rum["giri"]) == 3 and all(g_["passo"] >= 260 or nd < 521 for g_ in rum["giri"])
+        # p = (1 + giri con un migliore >= punteggio) / (1 + giri)
+        finto = {"giri": [{"migliore": 0.5}, {"migliore": 1.5}, {"migliore": 2.5}, {"migliore": 0.0}]}
+        assert R.p_rumore(3.0, finto) == 1 / 5 and R.p_rumore(1.0, finto) == 3 / 5 and R.p_rumore(0.0, finto) == 1.0
+
+
+def test_nomi_speculari_per_lo_short():
+    assert pattern.nome(["gap", ">=", 0.25], -1) == "gap in giù di almeno 0,25 escursioni"
+    assert pattern.nome(["rsi:2", "<=", 10], -1) == "RSI 2 sopra 90"
+    assert pattern.nome(["adx:14", ">=", 25], -1) == "ADX 14 sopra 25 (tendenza)"        # uguale per i due lati
+    assert pattern.nome(["apertura_in_ieri", ">=", 1], -1) == "apre sotto il minimo di ieri"
+
+
 if __name__ == "__main__":
     for nome, f in list(globals().items()):
         if nome.startswith("test_"):

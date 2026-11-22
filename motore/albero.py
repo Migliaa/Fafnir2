@@ -48,6 +48,7 @@ M_MIN = 1.5                          # margine per approfondire
 QUANTILE_FILTRO = {1: 0.95, 2: 0.99}  # batte questa quota dei filtri casuali (1a e 2a condizione aggiunta)
 D2_QUOTA_LORDO = 0.5                 # il segnale isolato vale almeno metà del lordo
 WF_EFFICIENZA_MIN = 0.5              # walk-forward della procedura: fuori campione / in-sample
+RUMORE_P_MAX = 0.05                  # quota massima di ricerche sul rumore che fanno un finale migliore
 R2_MIN, ANNI_POSITIVI_MIN, DSR_MIN = giudizio.R2_MIN, giudizio.ANNI_POSITIVI_MIN, giudizio.DSR_MIN
 PERMUTAZIONI = 1000
 MIN_TRADE_TRAIN = 10                 # trade minimi negli anni di training per scegliere un fratello
@@ -369,6 +370,7 @@ class Albero:
         self.wf_esterno: dict | None = None     # walk-forward calcolato fuori (ricerca a cicli)
         self.prove_esterne: float | None = None  # prove effettive fatte prima dell'albero (forza bruta), per il DSR
         self.var_sr_esterna: float | None = None
+        self.rumore_p: dict | None = None        # regola della radice -> probabilità che il rumore faccia di meglio
 
     # -- nodi
     def nodo(self, regola: dict, livello: str, genitore: str | None, etichetta: str, n_cond: int, conta: bool = True,
@@ -714,6 +716,13 @@ class Albero:
         return {"anni": righe, "n": int(tot[0]), "media_esc": _r(tot[1] / tot[0]) if tot[0] else None, "intera_ricerca": True}
 
     # -- L4
+    def _p_rumore(self, foglia: dict) -> float | None:
+        per_id = {n["id"]: n for n in self.nodi}
+        n = foglia
+        while n.get("genitore"):
+            n = per_id[n["genitore"]]
+        return (self.rumore_p or {}).get(json.dumps(n["regola"], sort_keys=True))
+
     def verifica(self, foglia: dict, wf: dict) -> dict:
         ctx = self.ctx
         reg = foglia["regola"]
@@ -742,6 +751,8 @@ class Albero:
             _porta("Costi doppi: guadagno medio", doppi.get("media_esc"), "> 0", None if doppi.get("media_esc") is None else doppi["media_esc"] > 0),
             *([_porta(f"Gemello {gem.get('prodotto')}", gem.get("media_esc"), "> 0", None if gem.get("media_esc") is None else gem["media_esc"] > 0)] if gem else []),
             *porte_differenziale(d),
+            *([_porta("Batte la ricerca sul rumore", self._p_rumore(foglia), f"<= {RUMORE_P_MAX:g}",
+                      None if self._p_rumore(foglia) is None else self._p_rumore(foglia) <= RUMORE_P_MAX)] if self.rumore_p is not None else []),
             _porta("DSR sulle prove fatte", dsr, f">= {DSR_MIN} ({n_prove} prove)", None if dsr is None else dsr >= DSR_MIN),
             _porta("Walk-forward della procedura (efficienza)", eff, f">= {WF_EFFICIENZA_MIN:g}", None if eff is None else eff >= WF_EFFICIENZA_MIN),
             _porta("Drawdown a blocchi / rimescolato", mc.get("rapporto_dd"), "informativo", None, info=True),

@@ -63,8 +63,8 @@ def test_curva_con_i_due_holdout():
 
 def test_ricerche():
     """Elenco e dettaglio di ricerche finte in una cartella temporanea: una finita, una in corso; nomi non ammessi rifiutati."""
-    vecchia = server.CARTELLA_RICERCHE
-    server.CARTELLA_RICERCHE = Path(tempfile.mkdtemp())
+    vecchia, vecchia_c = server.CARTELLA_RICERCHE, server.CARTELLA_CAMPAGNE
+    server.CARTELLA_RICERCHE, server.CARTELLA_CAMPAGNE = Path(tempfile.mkdtemp()), Path(tempfile.mkdtemp())
     try:
         assert all(r["formato"] == "esperimento" for r in server.api_ricerche())
         d = server.CARTELLA_RICERCHE / "prova"
@@ -92,8 +92,22 @@ def test_ricerche():
             else:
                 raise AssertionError(cattivo)
         assert server.api_versione()["commit"]
+        # campagna: una riga sola nell'elenco, le sue ricerche dentro la pagina della campagna
+        spec = {"nome": "camp", "prodotti": ["EC"], "lati": [1, -1], "barre": [15], "orari": {"da": "00:00", "a": "01:00"},
+                "uscite": {"15": [{"barre": 2}]}, "ipotesi": "i", "meccanismo": "m", "fonte": "f"}
+        (server.CARTELLA_CAMPAGNE / "camp").mkdir()
+        (server.CARTELLA_CAMPAGNE / "camp" / "spec.json").write_text(json.dumps(spec), encoding="utf-8")
+        d = server.CARTELLA_RICERCHE / "camp-EC-long-15m"
+        d.mkdir()
+        (d / "ricerca.json").write_text(json.dumps({"intestazione": {"prodotto": "EC", "barre": 15}, "campagna": "camp", "quando": "2099-01-03T10:00:00",
+                                                    "prove": 7, "budget": 1, "imbuto": [{"strato": "forza", "n": 5}, {"strato": "filtro3", "n": 0}], "nodi": [], "foglie": []}), encoding="utf-8")
+        c = server.api_campagna("camp")
+        assert [x["stato"] for x in c["ricerche"]] == ["finita", "da fare"] and c["ricerche"][0]["prove"] == 7 and c["righe"] is None
+        l = server.api_ricerche()
+        assert [x["nome"] for x in l if x["formato"] == "campagna"] == ["camp"] and "camp-EC-long-15m" not in [x["nome"] for x in l]
+        assert next(x for x in l if x["nome"] == "camp")["stato"] == "in corso"
     finally:
-        server.CARTELLA_RICERCHE = vecchia
+        server.CARTELLA_RICERCHE, server.CARTELLA_CAMPAGNE = vecchia, vecchia_c
 
 
 def main():

@@ -32,7 +32,8 @@ class Prodotto:
     adatto: bool = True
     verificato: bool = False
     note: str = ""
-    euro_punto: float | None = None   # valore di 1 CFD IG per punto: indici e oro (contratti "(1€)" e "(E1)" di IG) 1 euro; None se non noto
+    euro_punto: float | None = None   # valore di 1 CFD IG per punto: indici e oro (contratti "(1€)" e "(E1)" di IG) 1 euro;
+    # cambi: contratto mini da 10.000 unità, convertito in euro a un cambio tipico del 2023-2025 (stima); None se non noto
 
     def spread_a(self, ore: np.ndarray) -> np.ndarray:
         """Spread in punti per ogni ora d'ingresso (ore decimali italiane)."""
@@ -76,18 +77,21 @@ CATALOGO: dict[str, Prodotto] = {p.nome: p for p in [
     _P("CADJPY", "cambi yen", ("AUDJPY",), True, **_fx(0.01, 3.05)),
     _P("NZDJPY", "cambi yen", ("AUDJPY",), True, **_fx(0.01, 2.53)),
     _P("CHFJPY", "cambi yen", ("EURJPY",), True, **_fx(0.01, 2.63)),
-    _P("EURGBP", "cambi europei", ("EURCHF",), True, **_fx(0.0001, 1.40)),
+    _P("EURGBP", "cambi europei", ("EURCHF",), True, **_fx(0.0001, 1.40), euro_punto=11_700.0,
+       note="mini 10.000 EUR: sterline per punto convertite a 1,17 euro"),
     _P("EURCHF", "cambi europei", ("EURGBP",), True, **_fx(0.0001, 2.64)),
     _P("AUDUSD", "cambi dollaro", ("NE1", "CD"), True, **_fx(0.0001, 0.82)),
-    _P("AD", "cambi dollaro", ("NE1",), True, **_fx(0.0001, 0.82), note="AUD/USD"),
-    _P("EC", "cambi dollaro", ("BP", "SF"), True, **_fx(0.0001, 0.85), note="EUR/USD"),
-    _P("BP", "cambi dollaro", ("EC",), True, **_fx(0.0001, 1.40), note="GBP/USD"),
+    _P("AD", "cambi dollaro", ("NE1",), True, **_fx(0.0001, 0.82), euro_punto=9_200.0, note="AUD/USD; mini 10.000 AUD, dollari a 0,92 euro"),
+    _P("EC", "cambi dollaro", ("BP", "SF"), True, **_fx(0.0001, 0.85), euro_punto=9_200.0, note="EUR/USD; mini 10.000 EUR, dollari a 0,92 euro"),
+    _P("BP", "cambi dollaro", ("EC",), True, **_fx(0.0001, 1.40), euro_punto=9_200.0, note="GBP/USD; mini 10.000 GBP, dollari a 0,92 euro"),
     _P("NE1", "cambi dollaro", ("AD",), True, **_fx(0.0001, 2.05), note="NZD/USD"),
     # futures in dollari per unità estera: lo spread IG di USD/xxx convertito al livello tipico
-    _P("CD", "cambi dollaro", ("AD",), True, **_fx(0.0001 * 0.56, 1.77),
-       note="IG quota USD/CAD; spread convertito con CD circa 0,75"),
-    _P("JY", "cambi dollaro", ("SF",), True, **_fx(0.01 * 100 / 140**2, 0.94),
-       note="dollari per 100 yen; IG quota USD/JPY, spread convertito con USD/JPY circa 140"),
+    _P("CD", "cambi dollaro", ("AD",), True, **_fx(0.0001 * 0.56, 1.77), euro_punto=12_850.0,
+       note="IG quota USD/CAD; spread convertito con CD circa 0,75; mini 10.000 USD: dollari canadesi per punto di CD "
+            "a CD 0,72 (1 / 0,72² × 10.000) convertiti a 0,67 euro"),
+    _P("JY", "cambi dollaro", ("SF",), True, **_fx(0.01 * 100 / 140**2, 0.94), euro_punto=13_470.0,
+       note="dollari per 100 yen; IG quota USD/JPY, spread convertito con USD/JPY circa 140; mini 10.000 USD: yen per punto "
+            "di JY a JY 0,68 (100 / 0,68² × 10.000) convertiti a 1/160 di euro"),
     _P("SF", "cambi dollaro", ("JY",), True, **_fx(0.0001 / 0.89**2, 1.99),
        note="IG quota USD/CHF; spread convertito con USD/CHF circa 0,89"),
     _P("BTC", "cripto", ("MBT",), True, 100.0, finanziamento=0.25,
