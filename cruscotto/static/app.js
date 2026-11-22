@@ -1026,5 +1026,8 @@ function tema(t) { document.documentElement.dataset.theme = t; document.getEleme
 document.getElementById('tema').addEventListener('click', () => tema(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 tema(memo('tema') === 'light' ? 'light' : 'dark');
 window.addEventListener('hashchange', render);
+// la pagina si ricarica da sola quando il server si riavvia con codice nuovo o cambiano i file della pagina
+let impronta = null;
+setInterval(() => api('/versione').then(v => { const k = `${v.avviato}|${v.statici}`; if (impronta && k !== impronta) location.reload(); impronta = k; }).catch(() => {}), 5000);
 api('/versione').then(v => { const el = document.getElementById('versione'); if (el && v.commit) el.textContent = `Fafnir2 · versione ${v.commit} del ${dataIt(v.quando).slice(0, 10)}`; if (el) el.title = v.titolo || ''; }).catch(() => {});
 render();

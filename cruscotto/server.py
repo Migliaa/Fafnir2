@@ -8,6 +8,10 @@ import json
 import math
 import mimetypes
 import re
+import urllib.request
+import time
+import sys
+import os
 import subprocess
 import threading
 import webbrowser
@@ -397,7 +401,7 @@ def api_versione() -> dict:
         except (OSError, ValueError, subprocess.SubprocessError):
             _VERSIONE.update({"commit": None, "quando": None, "titolo": None})
         _VERSIONE["avviato"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
-    return _VERSIONE
+    return {**_VERSIONE, "statici": _impronta_statici()}
 
 
 def api_registro(famiglia: str | None) -> dict:
@@ -545,15 +549,66 @@ class Gestore(BaseHTTPRequestHandler):
         self._invia(200, f.read_bytes(), tipo)
 
 
-def crea_server(porta: int = PORTA) -> ThreadingHTTPServer:
-    """Server legato solo a 127.0.0.1 (non si raggiunge dalla rete)."""
-    return ThreadingHTTPServer((HOST, porta), Gestore)
+def crea_server(porta: int = PORTA, tentativi: int = 1) -> ThreadingHTTPServer:
+    """Server legato solo a 127.0.0.1 (non si raggiunge dalla rete). Con più tentativi aspetta che la porta si liberi
+    (riavvio automatico: il processo vecchio la sta ancora chiudendo)."""
+    for k in range(tentativi):
+        try:
+            return ThreadingHTTPServer((HOST, porta), Gestore)
+        except OSError:
+            if k == tentativi - 1:
+                raise
+            time.sleep(0.5)
 
 
-def avvia(porta: int = PORTA, apri: bool = True) -> None:
-    srv = crea_server(porta)
+# file il cui cambiamento riavvia il server (codice Python) o ricarica la pagina (file statici)
+SORGENTI = [RADICE / "cruscotto", RADICE / "motore", RADICE / "motore" / "motori"]
+
+
+def _impronta_codice() -> float:
+    return max((f.stat().st_mtime for d in SORGENTI for f in d.glob("*.py")), default=0.0)
+
+
+def _impronta_statici() -> float:
+    return max((f.stat().st_mtime for f in STATIC.glob("*")), default=0.0)
+
+
+def _gia_aperto(url: str) -> bool:
+    try:
+        with urllib.request.urlopen(url + "api/versione", timeout=2) as r:
+            return r.status == 200
+    except OSError:
+        return False
+
+
+def _sorveglia(srv: ThreadingHTTPServer, partenza: float, stato: dict) -> None:
+    """Quando cambia il codice Python del cruscotto o del motore ferma il server; `avvia` lo riavvia con il codice
+    nuovo e la pagina nel browser se ne accorge (`/api/versione`) e si ricarica."""
+    while True:
+        time.sleep(2)
+        try:
+            if _impronta_codice() > partenza:
+                stato["riavvia"] = True
+                srv.shutdown()
+                return
+        except OSError:
+            continue
+
+
+def avvia(porta: int = PORTA, apri: bool = True, riavvio: bool = False) -> None:
     url = f"http://{HOST}:{porta}/"
-    print(f"Cruscotto su {url}  (Ctrl+C per fermarlo)")
+    try:
+        srv = crea_server(porta, tentativi=20 if riavvio else 1)
+    except OSError:
+        if _gia_aperto(url):
+            print(f"Il cruscotto è già aperto su {url}: apro il browser.")
+            if apri:
+                webbrowser.open(url)
+            return
+        raise
+    print(f"Cruscotto su {url}  (si aggiorna da solo quando cambia il codice; Ctrl+C per fermarlo)")
+    stato = {"riavvia": False}
+    threading.Thread(target=_sorveglia, args=(srv, _impronta_codice(), stato), daemon=True).start()
     if apri:
         threading.Timer(0.5, lambda: webbrowser.open(url)).start()
     try:
@@ -562,3 +617,7 @@ def avvia(porta: int = PORTA, apri: bool = True) -> None:
         pass
     finally:
         srv.server_close()
+    if stato["riavvia"]:
+        print("codice cambiato: riavvio", flush=True)
+        time.sleep(1)                        # lascia finire di scrivere chi stava salvando i file
+        os.execv(sys.executable, [sys.executable, "-m", "cruscotto", "--no-browser", "--riavvio", "--porta", str(porta)])

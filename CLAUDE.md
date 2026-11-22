@@ -8,6 +8,7 @@ Tavolo di lavoro per migliorare i sistemi automatici di Andrea su ProRealTime. O
 3. `moduli/README.md`: moduli già validati, da riusare prima di scriverne di nuovi.
 4. `idee/idee-di-trading.md`: principi trasversali (che tipo di vantaggio ha una gamba e quali moduli servono di conseguenza) e logiche di mercato estratte dai sistemi, con grado di prova (validate, da misurare, smentite). Quando un nuovo sistema funziona o un test conferma o smentisce una logica, aggiornalo.
 5. `fonti/prorealtime/sintassi-verificata.md` e `fonti/paper/schede.md` prima di cercare online; le fonti nuove vanno aggiunte lì.
+6. **Fafnir2** (il software di ricerca di sistemi nuovi in `motore/` e `cruscotto/`): `ricerca/fafnir2.md` dice cosa fa, come si lancia una ricerca o una campagna, dove leggere i risultati senza aprire i dati e cosa manca. Leggerlo prima di qualunque ricerca di sistemi nuovi.
 
 **Quando Andrea incolla un codice nuovo** (di solito con "hai 5 tentativi"), senza aspettare altre istruzioni:
 1. salva `sistemi/<nome>/originale.txt` e scrivi `analisi.md` (cosa fa, problemi, che tipo di vantaggio ha ogni gamba secondo i principi trasversali di `idee/idee-di-trading.md`);

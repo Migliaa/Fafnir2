@@ -33,7 +33,8 @@ class Prodotto:
     verificato: bool = False
     note: str = ""
     euro_punto: float | None = None   # valore di 1 CFD IG per punto: indici e oro (contratti "(1€)" e "(E1)" di IG) 1 euro;
-    # cambi: contratto mini da 10.000 unità, convertito in euro a un cambio tipico del 2023-2025 (stima); None se non noto
+    # cambi: contratto mini da 10.000 unità (quello che Andrea usa, confermato il 2026-11-22), convertito in euro a un
+    # cambio tipico del 2023-2025 (stima); None se non noto
 
     def spread_a(self, ore: np.ndarray) -> np.ndarray:
         """Spread in punti per ogni ora d'ingresso (ore decimali italiane)."""
