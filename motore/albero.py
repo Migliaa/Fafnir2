@@ -43,7 +43,7 @@ CARTELLA = RISULTATI / "ricerche"   # i test la sostituiscono con una cartella t
 # ---- porte (protocollo, "Porte come funzioni di altre metriche")
 T_MIN = 2.0                          # guadagno medio / errore standard
 TRADE_ANNO_RAMO = 12.0               # per approfondire un ramo con altri filtri
-TRADE_ANNO_FOGLIA = 6.0              # pavimento pratico di un sistema finale
+TRADE_ANNO_FOGLIA = 8.0              # minimo di un sistema finale (Andrea, 2026-11-22: 8 è proprio il minimo)
 M_MIN = 1.5                          # margine per approfondire
 QUANTILE_FILTRO = {1: 0.95, 2: 0.99}  # batte questa quota dei filtri casuali (1a e 2a condizione aggiunta)
 D2_QUOTA_LORDO = 0.5                 # il segnale isolato vale almeno metà del lordo

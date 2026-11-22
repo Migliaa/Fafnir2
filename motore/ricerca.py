@@ -3,7 +3,7 @@ esatto e verifica (`ricerca/protocollo-albero.md`, sezione "Ricerca a cicli").
 
 1. **Forza bruta**: ogni ora d'ingresso (ogni 5 minuti) × ogni uscita × "nessuna condizione" o un pattern dello strato 1
    (struttura del prezzo, `motore/pattern.py`). Decine di migliaia di regole, sul motore a matrice.
-2. **Filtro 1**: guadagno o margine, t >= 2, almeno 6 trade l'anno, fuori campione CPCV positivo, positiva in entrambe le
+2. **Filtro 1**: guadagno o margine, t >= 2, almeno 8 trade l'anno, fuori campione CPCV positivo, positiva in entrambe le
    metà del periodo; poi i migliori per punteggio, saltando quelli che guadagnano negli stessi giorni (semi).
 3. **Moltiplicazione 1**: ogni seme × ogni altro pattern dello strato 1 e dello strato 2 (indicatori e candele).
 4. **Filtro 2**: come il filtro 1, più il confronto con il genitore: batte il 95% dei filtri a caso che tolgono la stessa
@@ -38,7 +38,7 @@ PREDEFINITI = {"semi_1": 300, "semi_2": 100, "finali": 12, "correlazione_semi": 
                "quantile_2": 0.95, "quantile_3": 0.99, "candidati_per_seme": 10}
 TRADE_ANNO_MIN, T_MIN, M_MIN = albero.TRADE_ANNO_FOGLIA, albero.T_MIN, albero.M_MIN
 CAMPIONE_EFFETTIVI = 4000
-MOTIVI = ["meno di 6 trade l'anno", "guadagno a trade troppo basso anche con un filtro", "guadagno non distinguibile dal caso (t < 2)",
+MOTIVI = ["meno di 8 trade l'anno", "guadagno a trade troppo basso anche con un filtro", "guadagno non distinguibile dal caso (t < 2)",
           "perde sugli anni lasciati fuori (CPCV)", "perde in una metà del periodo", "non batte i filtri a caso",
           "non migliora il genitore in 2 terzi su 3", "i trade tolti non vanno peggio", "punteggio non migliore della regola di partenza"]
 

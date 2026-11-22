@@ -51,7 +51,7 @@ Nel cruscotto: nella prima vista un settimo numero, "segnale isolato" (D2 in eur
 Le soglie fisse scartano sistemi buoni (Andrea: un sistema con meno di 40 trade l'anno ma più di 20 € a trade è ottimo, ed è spesso il più affidabile perché più semplice). Le porte diventano rapporti:
 - **copertura del guadagno**: `G = guadagno medio a volatilità di oggi / guadagno richiesto per la sua durata` (20 € fino a 36 ore, 30 € fino a 72, 50 € oltre). G ≥ 1: **pronto**.
 - **margine per approfondire**: un filtro toglie trade e non ne aggiunge, quindi il massimo a cui un ramo può arrivare tenendo 12 trade l'anno è l'utile annuo diviso 12. `M = utile annuo / (12 × guadagno richiesto)`. M ≥ 1,5: c'è margine (c01: 567 € l'anno / 12 = 47 € contro 20, M ≈ 2,4). M < 1: nessun filtro lo porterà alla soglia, si scarta anche se la curva è bella.
-- **numero di trade sufficiente**: invece di un minimo fisso, quello che serve perché il guadagno medio non sia caso, `t = guadagno medio / dispersione × √n ≥ 2` (più alto con molte prove, tramite DSR). Un sistema che guadagna molto rispetto alla dispersione ne richiede pochi; il pavimento pratico resta circa 6 trade l'anno (frequenza minima per avere un sistema utile), e 12 per i rami.
+- **numero di trade sufficiente**: invece di un minimo fisso, quello che serve perché il guadagno medio non sia caso, `t = guadagno medio / dispersione × √n ≥ 2` (più alto con molte prove, tramite DSR). Un sistema che guadagna molto rispetto alla dispersione ne richiede pochi; il pavimento è 8 trade l'anno (Andrea, 2026-11-22: "8 è proprio il minimo"; prima era 6), e 12 per i rami.
 - **semplicità**: ogni condizione o parametro in più alza la soglia del miglioramento richiesto sul genitore (una condizione: batte il 95% dei filtri casuali; due condizioni: il 99%). A parità di risultato vince il nodo con meno condizioni.
 - **ordine delle radici**: per `G × R² × min(1, t/3)`, con il drawdown in euro accanto.
 
@@ -134,7 +134,7 @@ Andrea: l'ampiezza era troppo stretta (540 regole) e i filtri non devono solo re
 | Passo | Cosa si prova | Porte |
 |---|---|---|
 | forza bruta | ogni ora d'ingresso ogni 5 minuti × 8 uscite × nessun pattern o uno dei 49 di struttura del prezzo | nessuna |
-| filtro 1 | | guadagno sopra soglia o margine ≥ 1; t ≥ 2; ≥ 6 trade l'anno; CPCV positiva; entrambe le metà positive; semi diversi (correlazione ≤ 0,9) |
+| filtro 1 | | guadagno sopra soglia o margine ≥ 1; t ≥ 2; ≥ 8 trade l'anno (6 nella prima ricerca); CPCV positiva; entrambe le metà positive; semi diversi (correlazione ≤ 0,9) |
 | moltiplicazione 1 | ogni seme × ogni altro pattern di struttura, indicatore o candela (famiglia diversa) | nessuna |
 | filtro 2 | | come il filtro 1 con margine ≥ 1,5; batte il 95% dei filtri a caso (formula esatta della media di un sottoinsieme casuale); migliora il seme in 2 terzi su 3; i trade tolti vanno peggio |
 | moltiplicazione 2 | ogni seme × regime e calendario; stesse condizioni con le altre 7 uscite e con l'ingresso spostato di 15 e 30 minuti | nessuna |

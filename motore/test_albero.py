@@ -55,9 +55,9 @@ def test_porte_come_rapporti():
     p = A.porte_radice({"G": 0.2, "M": 0.43, "t": 3.0, "trade_anno": 26}, {"mediana": 0.1})
     assert p[0]["esito"] == "rosso" and A._passa(p) is False
     assert A._passa(A.porte_radice({"G": 0.5, "M": 1.6, "t": 3.0, "trade_anno": 26}, {"mediana": 0.1}))
-    assert A._passa(A.porte_radice({"G": 1.1, "M": 1.0, "t": 2.0, "trade_anno": 6}, {"mediana": 0.1}))     # pronto con pochi trade
-    assert not A._passa(A.porte_radice({"G": 1.1, "M": 1.0, "t": 1.9, "trade_anno": 6}, {"mediana": 0.1}))
-    assert not A._passa(A.porte_radice({"G": 1.1, "M": 1.0, "t": 3.0, "trade_anno": 5.9}, {"mediana": 0.1}))
+    assert A._passa(A.porte_radice({"G": 1.1, "M": 1.0, "t": 2.0, "trade_anno": 8}, {"mediana": 0.1}))     # pronto con pochi trade
+    assert not A._passa(A.porte_radice({"G": 1.1, "M": 1.0, "t": 1.9, "trade_anno": 8}, {"mediana": 0.1}))
+    assert not A._passa(A.porte_radice({"G": 1.1, "M": 1.0, "t": 3.0, "trade_anno": 7.9}, {"mediana": 0.1}))
 
 
 def test_strato_differenziale():

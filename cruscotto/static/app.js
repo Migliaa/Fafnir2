@@ -204,8 +204,8 @@ function curvaQuadrata(c, fmt) {
   return h('div', { class: 'grafico curva-q' }, svg, tip, dsv);
 }
 /* Grafico piccolo e quadrato della riga dell'elenco: stessa curva, un colore per periodo. */
-function miniGrafico(mini) {
-  const S = 56, svg = sv('svg', { viewBox: `0 0 ${S} ${S}`, class: 'mini', width: S, height: S });
+function miniGrafico(mini, S = 56) {
+  const svg = sv('svg', { viewBox: `0 0 ${S} ${S}`, class: 'mini', width: S, height: S });
   if (!mini || !mini.y || mini.y.length < 2) return svg;
   const y = mini.y, lo = Math.min(...y, 0), hi = Math.max(...y, 0), n = y.length;
   const X = i => 2 + (S - 4) * i / (n - 1), Y = v => 2 + (S - 4) * (1 - (v - lo) / ((hi - lo) || 1));
@@ -612,8 +612,9 @@ async function paginaRicerca(nome) {
     h('p', { class: 'muto' }, `${ih.prodotto} ${ih.barre} min · lanciata il ${dataIt(a.quando)} · ${nf(a.prove, 0)} prove in ${nf(a.durata_s, 0)} secondi · in-sample ${a.anni[0]}-${a.anni[1]} · euro di oggi: 1 escursione = ${nf(a.euro_per_escursione_oggi, 0)} €`),
     h('div', { class: 'pannello' }, risultato, h('div', { class: 'imbuto-riga' }, a.imbuto ? imbutoSVG(a.imbuto) : null, perche(a)),
       h('p', { class: 'muto' }, 'La lunghezza delle barre è in scala logaritmica. ', h('a', { href: '#/come-funziona' }, 'Cosa fa ogni strato'))),
-    cand.length ? h('div', {}, h('h2', {}, 'Da provare su ProRealTime'), cand.map(f => schedaFoglia(a, f))) : null,
-    !cand.length && altre.length ? h('div', {}, h('h2', {}, 'I sistemi finali scartati'), altre.map(f => schedaFoglia(a, f))) : null,
+    a.walkforward_ricerca ? wfGrafico(a) : null,
+    cand.length ? h('div', {}, h('h2', {}, 'Da provare su ProRealTime'), listaFoglie(a, cand)) : null,
+    altre.length ? h('div', {}, h('h2', {}, cand.length ? 'Gli altri sistemi finali, scartati' : 'I sistemi finali, scartati dalla verifica'), listaFoglie(a, altre)) : null,
     !a.foglie.length ? h('div', {}, h('h2', {}, 'Le regole arrivate più vicine'), h('p', { class: 'muto' }, 'Le dieci con il margine più alto. Nessuna arriva in fondo; servono a capire quanto manca.'), vicini(a)) : null,
     h('h2', {}, 'Dettagli'),
     sezione('Diario della ricerca', () => diarioLista(a.diario)),
@@ -626,6 +627,61 @@ async function paginaRicerca(nome) {
     sezione('Ipotesi e ingressi dichiarati prima', () => h('div', {}, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
       h('ul', {}, (ih.ingressi || []).map(ip => h('li', {}, h('strong', {}, ip.nome), ` (${ip.grandezza} ${ip.op} ${ip.soglie.join(' / ')}): ${ip.meccanismo}`))))),
     a.cicli ? null : sezione('Tutte le regole semplici provate', () => tutteRegole(a), `${a.nodi.filter(n => n.livello === 'L0').length}`));
+}
+/* Lista compatta dei sistemi finali: una riga per sistema con la curva quadrata piccola e le metriche principali;
+   clic sulla riga per aprire la scheda completa sotto. */
+function miniDaCurva(c) {
+  if (!c || !c.cum) return null;
+  const n = c.cum.length, idx = [...new Set(Array.from({ length: 70 }, (_, i) => Math.round(i * (n - 1) / 69)))];
+  const pos = idx.map(i => i);
+  const seg = (c.segmenti || []).map(([p, i0, i1]) => [p, pos.findIndex(i => i >= i0), Math.max(0, pos.findIndex(i => i >= i1))]);
+  return { y: idx.map(i => c.cum[i]), segmenti: seg.map(([p, a, b]) => [p, a < 0 ? 0 : a, b < 0 ? idx.length - 1 : b]) };
+}
+const BREVI = [[/^DSR/, 'conto delle prove'], [/^Walk-forward/, 'anno per anno'], [/^Gemello/, 'Euro Stoxx'], [/^Guadagno medio/, '€ a trade'], [/^Trade l/, 'pochi trade'],
+  [/^Regolarità/, 'curva'], [/^Anni positivi/, 'anni positivi'], [/^Costi doppi/, 'costi doppi'], [/^Segnale|^D1|^D2/, 'segnale isolato'], [/^t del/, 'caso'], [/^Utile fuori|^Guadagno medio fuori|^Fuori campione/, '2024-2025']];
+const breve = n => { const x = BREVI.find(([re]) => re.test(n)); return x ? x[1] : n; };
+function listaFoglie(a, foglie) {
+  const col = [['', ''], ['Sistema', 'sx'], ['€ a trade', '', 'Guadagno medio netto con la volatilità del 2023, 1 CFD IG; in verde se supera la soglia per la sua durata'],
+    ['Trade l’anno'], ['Ore', '', 'Ore medie in posizione'], ['R²', '', 'Regolarità della curva'], ['Drawdown', '', 'In euro di oggi'], ['Utile/DD'],
+    ['t', '', 'Quanto il guadagno medio è lontano dal caso'], ['Anno per anno', '', 'Ricerca rifatta con i soli anni precedenti: quanto vale fuori campione rispetto all\'in-sample (serve almeno 0,5)'], ['Esito', 'sx']];
+  const righe = [];
+  foglie.forEach(f => {
+    const m = f.misure_minuto || {}, ko = [...(f.porte || []), ...(f.voci_prova_finale || [])].filter(p => p.esito === 'rosso' || p.esito === 'grigio').map(p => breve(p.nome));
+    const det = h('tr', { class: 'dettaglio', style: 'display:none' }, h('td', { colspan: col.length }));
+    let aperta = false;
+    const riga = h('tr', { class: 'clic', onclick: () => { aperta = !aperta; det.style.display = aperta ? '' : 'none'; if (aperta && !det.firstChild.firstChild) det.firstChild.append(schedaFoglia(a, f)); } },
+      h('td', { class: 'mini-td' }, miniGrafico(miniDaCurva(f.curva), 64)),
+      h('td', { class: 'sx desc' }, f.etichetta),
+      h('td', { class: (m.G || 0) >= 1 ? 'pos' : 'neg' }, nE(m.euro_oggi)),
+      h('td', { class: (m.trade_anno || 0) >= 8 ? '' : 'neg' }, nf(m.trade_anno, 0)), h('td', {}, nf(m.ore_medie, 1)),
+      h('td', { class: (m.r2 || 0) >= 0.85 ? '' : 'neg' }, nf(m.r2, 2)), h('td', {}, nE(m.dd_euro_oggi, 0)), h('td', {}, nf(m.utile_su_dd, 1)), h('td', {}, nf(m.t, 1)),
+      h('td', { class: (f.efficienza_wf ?? -1) >= 0.5 ? 'pos' : 'neg' }, nf(f.efficienza_wf, 2)),
+      h('td', { class: 'sx esito-td', title: f.motivo || '' }, badge(f.esito), ' ', h('span', { class: 'muto' }, f.esito === 'candidato' ? '' : ko.join(', '))));
+    righe.push(riga, det);
+  });
+  return h('div', {}, h('div', { class: 'tabella-cont' }, h('table', { class: 'compatta' }, h('thead', {}, h('tr', {}, col.map(([t, c, ti]) => h('th', { class: c || null, title: ti || null }, t)))),
+    h('tbody', {}, righe))), h('p', { class: 'muto' }, 'Clic su un sistema per la scheda completa: curva grande, sette numeri, porte e codice ProRealCode.'));
+}
+/* La ricerca rifatta anno per anno: una barra per anno con il guadagno medio a trade dei finali scelti con gli anni prima. */
+function wfGrafico(a) {
+  const wf = a.walkforward_ricerca, e = a.euro_per_escursione_oggi || 0;
+  const anni = wf.anni.filter(r => r.media_esc != null);
+  if (!anni.length) return null;
+  const W = 560, H = 170, m = { l: 46, r: 10, t: 14, b: 34 }, v = anni.map(r => r.media_esc * e);
+  const lo = Math.min(0, ...v), hi = Math.max(0, ...v), Y = x => m.t + (H - m.t - m.b) * (1 - (x - lo) / ((hi - lo) || 1)), bw = (W - m.l - m.r) / anni.length;
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'wf-svg', role: 'img', 'aria-label': 'Guadagno medio a trade fuori campione, anno per anno' });
+  svg.append(sv('line', { x1: m.l, x2: W - m.r, y1: Y(0), y2: Y(0), style: 'stroke:var(--bordo)' }), sv('text', { x: m.l - 6, y: Y(0) + 4, 'text-anchor': 'end', style: 'font-size:11px;fill:var(--muto)' }, '0 €'));
+  anni.forEach((r, i) => {
+    const x = m.l + i * bw + bw * 0.18, y = Y(Math.max(0, v[i])), hh = Math.abs(Y(v[i]) - Y(0));
+    svg.append(sv('rect', { x, y, width: bw * 0.64, height: Math.max(1, hh), rx: 2, style: `fill:${v[i] >= 0 ? 'var(--verde)' : 'var(--rosso)'}` }, sv('title', {}, `${r.anno}: ${nf(v[i], 1)} € a trade su ${r.n} trade · ${r.etichetta}`)),
+      sv('text', { x: x + bw * 0.32, y: H - m.b + 14, 'text-anchor': 'middle', style: 'font-size:11px;fill:var(--testo)' }, String(r.anno)),
+      sv('text', { x: x + bw * 0.32, y: H - m.b + 27, 'text-anchor': 'middle', style: 'font-size:10px;fill:var(--muto)' }, `${nf(v[i], 0)} €`));
+  });
+  const tot = wf.media_esc == null ? null : wf.media_esc * e;
+  const ins = a.foglie.length ? a.foglie.reduce((x, f) => x + ((f.misure_minuto || {}).euro_oggi || 0), 0) / a.foglie.length : null;
+  return h('div', { class: 'pannello wf-box' }, h('div', {}, h('div', { class: 'et' }, 'La stessa ricerca rifatta anno per anno, con i soli anni prima'),
+    h('p', { class: 'muto' }, `Ogni anno dal 2017 la ricerca intera si rifà con gli anni precedenti e i finali che sceglie si guardano nell'anno dopo, che non hanno visto. In tutto ${wf.n} trade, ${tot == null ? '–' : nf(tot, 1) + ' €'} a trade` +
+      (ins != null ? `, contro ${nf(ins, 0)} € a trade in media dei finali in-sample.` : '.'))), svg);
 }
 function tabellaRegole(l) {
   return h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, [['', ''], ['Regola', 'sx'], ['€ a trade', '', 'Con la volatilità di oggi, 1 CFD IG, netto'], ['Trade l’anno'], ['Ore'], ['t'], ['R²'], ['Batte il caso', '', 'Quota di filtri a caso che toglierebbero la stessa quota di trade al genitore e farebbero peggio']].map(([t, c, ti]) => h('th', { class: c || null, title: ti || null }, t)))),
@@ -689,7 +745,7 @@ function schedaFoglia(a, f) {
     grande('Lordo / costi', m.costo_euro_oggi ? nf((m.euro_oggi + m.costo_euro_oggi) / m.costo_euro_oggi, 1) : '–', 'riferimento 3', null, `costi ${nE(m.costo_euro_oggi)} a trade`, 'Quante volte il lordo copre spread e notte'),
     grande('Tempo in mercato', nf(m.ore_medie, 1) + ' ore', 'nessuna soglia', null, 'ore medie per trade', 'Ogni posizione aperta blocca margine'),
     grande('Regolarità (R²)', nf(m.r2), 'soglia 0,85', es(porta('Regolarità')), `anni positivi ${pc(m.anni_positivi)}`, 'Quanto la curva somiglia a una retta'),
-    grande('Trade l\'anno', nf(m.trade_anno, 0), `soglia 6 e t >= 2 (t ${nf(m.t, 1)})`, es(porta('Trade l')), `${m.n} trade in ${a.anni[1] - a.anni[0] + 1} anni`, 'Numero medio di trade in un anno'),
+    grande('Trade l\'anno', nf(m.trade_anno, 0), `soglia 8 e t >= 2 (t ${nf(m.t, 1)})`, es(porta('Trade l')), `${m.n} trade in ${a.anni[1] - a.anni[0] + 1} anni`, 'Numero medio di trade in un anno'),
     settimoNumero(f)),
     h('div', { class: 'fuori' }, h('strong', {}, 'Fuori campione 2024-2025: '), pf && pf.avanti ? [`${pf.avanti.n} trade · utile `, h('span', { class: segno(pf.avanti.utile) }, eur(pf.avanti.utile)),
       ` · ${nf(pf.avanti.guadagno_medio, 1)} € a trade`] : 'non eseguito: la foglia non ha passato le porte della scoperta.'),
@@ -796,7 +852,7 @@ const STRATI = [
     perche: 'Trovare gli orari e le situazioni in cui il DAX tende a salire, senza scegliere a occhio.' },
   { id: 'filtro1', titolo: 'Filtro 1', sotto: 'i semi', disegno: disegnoL0,
     cosa: 'Tiene le regole che guadagnano già abbastanza a trade o che possono arrivarci con un filtro, e fra queste sceglie i semi diversi fra loro.',
-    filtro: ['Guadagno sopra la soglia (20/30/50 € per durata) o margine almeno 1', 'Guadagno lontano dal caso (t almeno 2), almeno 6 trade l\'anno', 'Positiva sugli anni lasciati fuori e in entrambe le metà del periodo', 'Una regola che guadagna negli stessi giorni di un seme già scelto (correlazione oltre 0,9) è un doppione'],
+    filtro: ['Guadagno sopra la soglia (20/30/50 € per durata) o margine almeno 1', 'Guadagno lontano dal caso (t almeno 2), almeno 8 trade l\'anno', 'Positiva sugli anni lasciati fuori e in entrambe le metà del periodo', 'Una regola che guadagna negli stessi giorni di un seme già scelto (correlazione oltre 0,9) è un doppione'],
     perche: 'Un filtro toglie trade, non ne aggiunge: se il margine non c\'è, nessuna combinazione lo crea.' },
   { id: 'molt1', titolo: 'Moltiplicazione 1', sotto: '+ un pattern o un indicatore', disegno: () => disegnoMoltiplica([['+ ieri giornata interna', 0], ['+ sopra media 50 giorni', 1], ['+ RSI 14 sopra 70', 0], ['+ barra verde', 0], ['+ ADX sotto 20', 1], ['+ gap in giù', 0]]),
     cosa: 'Ogni seme si combina con ogni altro pattern di struttura e con indicatori e candele sulle barre: da un seme nascono decine di regole.',
