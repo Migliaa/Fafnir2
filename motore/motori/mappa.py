@@ -65,10 +65,7 @@ def calcola(nome: str, minuti: int = 60, ore_max: int = 72) -> dict:
         if prod.spread is None:
             c = np.zeros(len(i))
         else:
-            notti = giorno_n[jj] - giorno_n[i]
-            a, z = prod.ore_principali
-            s = np.where((ora[i] >= a) & (ora[i] < z), prod.spread, prod.spread_fuori or prod.spread)
-            c = (s + np.abs(o[i]) * prod.finanziamento / 365.0 * notti) / esc[i]
+            c = prod.costo(ora_min[i] / 60.0, o[i], giorno_n[jj] - giorno_n[i]) / esc[i]
         df = pl.DataFrame({"giorno": giorno[i], "ora": ora_min[i], "anno": anno[i],
                            "L": r - c, "S": -r - c})
         agg = df.group_by("giorno", "ora", "anno").agg(

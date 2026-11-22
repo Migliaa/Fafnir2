@@ -27,13 +27,13 @@ def test_mappa_su_dati_finti():
     vero, cartella = dati.barre, mappa.CARTELLA
     dati.barre, mappa.CARTELLA = _finte, Path(tempfile.mkdtemp())
     try:
-        mappa.calcola("JY", 60, 72)  # JY non ha costi nel catalogo: rendimento lordo
-        c = mappa.cella("JY", 60, "lun", "03:00", 67)
+        mappa.calcola("KW", 60, 72)  # KW non ha costi nel catalogo: rendimento lordo
+        c = mappa.cella("KW", 60, "lun", "03:00", 67)
         assert abs(c["long"]["media_esc"] - 6.7) < 1e-9, c
         assert abs(c["short"]["media_esc"] + 6.7) < 1e-9, c
         assert c["long"]["anni"] == 2 and c["long"]["n"] >= 95, c
-        assert "errore" in mappa.cella("JY", 60, "ven", "20:00", 48)  # uscita di domenica
-        assert "errore" in mappa.cella("JY", 60, "ven", "20:00", 48.5)
+        assert "errore" in mappa.cella("KW", 60, "ven", "20:00", 48)  # uscita di domenica
+        assert "errore" in mappa.cella("KW", 60, "ven", "20:00", 48.5)
     finally:
         dati.barre, mappa.CARTELLA = vero, cartella
 

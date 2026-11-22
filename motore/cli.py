@@ -5,6 +5,8 @@ Uso (dalla cartella del progetto):
   python -m motore.cli mappa calcola AUDJPY --barre 60 --ore 72
   python -m motore.cli mappa migliori AUDJPY --barre 60 --k 10
   python -m motore.cli mappa cella AUDJPY --barre 60 --giorno lun --ora 03:00 --durata 67
+  python -m motore.cli minbtl --sr 0.7 --anni 13 [--prove 50]
+  python -m motore.cli registro stato [--famiglia X]
 """
 from __future__ import annotations
 
@@ -12,7 +14,7 @@ import argparse
 import json
 import sys
 
-from . import catalogo
+from . import catalogo, metriche, validazione
 from .motori import mappa
 
 
@@ -30,10 +32,23 @@ def main(argv: list[str] | None = None) -> None:
     m.add_argument("--giorno")
     m.add_argument("--ora")
     m.add_argument("--durata", type=float, help="ore")
+    b = sub.add_parser("minbtl", help="prove ammesse e anni necessari (Bailey et al. 2014)")
+    b.add_argument("--sr", type=float, required=True, help="Sharpe annuo da certificare")
+    b.add_argument("--anni", type=float, required=True, help="anni di dati della scoperta")
+    b.add_argument("--prove", type=int, help="numero di prove per cui calcolare gli anni necessari")
+    r = sub.add_parser("registro")
+    r.add_argument("azione", choices=["stato"])
+    r.add_argument("--famiglia")
     a = p.parse_args(argv)
 
     if a.cmd == "catalogo":
         out = catalogo.riassunto()
+    elif a.cmd == "minbtl":
+        prove = [a.prove] if a.prove else [10, 20, 50, 100, 400]
+        out = {"sr": a.sr, "anni": a.anni, "prove_ammesse": round(metriche.prove_ammesse(a.anni, a.sr), 1),
+               "anni_necessari": {str(n): round(metriche.min_btl(n, a.sr), 2) for n in prove}}
+    elif a.cmd == "registro":
+        out = validazione.conteggio(a.famiglia)
     elif a.azione == "calcola":
         out = mappa.calcola(a.prodotto, a.barre, a.ore)
     elif a.azione == "migliori":

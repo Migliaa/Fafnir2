@@ -162,7 +162,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 1 | `motore/dati`: lettura con il taglio, ora italiana, barre, cross sintetici, cache, test | fatta (2026-11-22) |
 | 2 | schema in-sample/out-of-sample e metriche decisi dalla ricerca | fatta (2026-11-22) |
 | 3 | `catalogo` (orari, costi, gemelli) e `motori/mappa`; taratura su AUDJPY e DAX | fatta (2026-11-22): AUDJPY ritrovato, DAX rimandato alla fase 5 |
-| 4 | `metriche` e `validazione` (delegabile con specifica) | |
+| 4 | `metriche` e `validazione` (delegabile con specifica) | fatta (2026-11-22), specifica in `spec-fase-4.md` |
 | 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | |
 | 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | |
 | 7 | `coda` notturna e rapporto del mattino; primi esperimenti: setaccio e trapianti dei modelli 128 e 185 | |
@@ -173,13 +173,18 @@ Dalla fase 3 ogni modulo nuovo espone già le sue funzioni alla `cli` e scrive i
 
 **Note sui dati emerse nella fase 1**: l'FDAX ha la sessione notturna Eurex dalla fine del 2018 (prima apriva alle 08:00 italiane); i cross contro yen si costruiscono con scala 100 (JY è quotato in dollari per 100 yen).
 
-**Taratura della fase 3** (mappa oraria senza condizioni, 2011-2023, rendimenti in escursioni medie giornaliere al netto degli spread e del finanziamento notturno indicativi del catalogo, che Andrea deve ancora confermare):
+**Taratura della fase 3** (mappa oraria senza condizioni, 2011-2023, rendimenti in escursioni medie giornaliere al netto di spread e costo amministrativo notturno presi dalle pagine ufficiali IG, `fonti/prodotti/costi-ig.md`):
 
-- *AUDJPY*, long dal lunedì 03:00 al mercoledì 22:00 (la finestra di 128): +0,062 escursioni per trade al netto, profit factor 1,16 senza stop, 8 anni positivi su 13, +0,13 nel 2019-2023; al lordo dei costi +0,11 (t circa 2,5). Il segno c'è, e le migliori celle long dell'intera mappa sono tutte finestre lunedì-mercoledì, cioè il ciclo settimanale dello yen. Nessuna cella però supera la soglia del caso per 5.800 celle provate (t 4,2): la mappa da sola non avrebbe fatto scoprire 128, che vale perché l'ipotesi viene da un meccanismo dichiarato prima e perché il sistema reale aggiunge lo stop e le esclusioni.
+- *AUDJPY*, long dal lunedì 03:00 al mercoledì 22:00 (la finestra di 128): +0,080 escursioni per trade al netto, profit factor 1,21 senza stop, 9 anni positivi su 13, +0,15 nel 2019-2023 (t 1,85). Il segno c'è, e le migliori celle long dell'intera mappa sono tutte finestre lunedì-mercoledì, cioè il ciclo settimanale dello yen. Nessuna cella però supera la soglia del caso per 5.800 celle provate (t 4,2): la mappa da sola non avrebbe fatto scoprire 128, che vale perché l'ipotesi viene da un meccanismo dichiarato prima e perché il sistema reale aggiunge lo stop e le esclusioni.
 - *DAX (FDAX)*: le due gambe di 165 senza le loro condizioni non rendono (short 12:30 + 7 ore da martedì a venerdì tra −0,024 e +0,002 escursioni; long 13:30 → 09:00 da lunedì a giovedì tra −0,020 e +0,005). Il loro vantaggio sta nelle condizioni (media esponenziale, RSI, minimo di ieri), quindi la taratura del DAX si fa con la tabella degli eventi nella fase 5, non con la mappa.
 - *Una trappola vista sul DAX*: le celle migliori (long da lunedì e giovedì alle 17:00 tenuti nella sera, t 3,7, tutti gli anni positivi) esistono solo dalla fine del 2018 perché prima la sessione chiudeva alle 22:00, quindi hanno 5-6 anni invece di 13. Il riassunto riporta per questo gli anni di ogni cella; le celle con meno anni non si confrontano con le altre come se fossero ugualmente attendibili.
 
 Comandi: `python -m motore.cli mappa calcola|migliori|cella <prodotto> --barre 60`, `python -m motore.cli catalogo`; test in `motore/test_mappa.py` (dati finti dal risultato noto). La mappa legge solo gli anni della scoperta.
+
+**Cosa hanno mostrato i test della fase 4** (dati finti, 21 test, ognuno visto fallire con un errore introdotto apposta):
+- *Perdite a grappolo.* Una serie a media zero con soli periodi più agitati non ha drawdown molto diversi dal rimescolamento semplice (rapporto fra 0,8 e 1,4 secondo il seme). Il bootstrap a blocchi fa la differenza quando nei periodi agitati il sistema perde davvero (media negativa negli agitati e positiva nei calmi): lì il drawdown mediano a blocchi è 1,3-1,7 volte quello rimescolato. Il rapporto della scheda misura quindi proprio le perdite raggruppate chieste da Andrea, non la semplice volatilità variabile.
+- *La CPCV da sola non basta contro la selezione.* Su 50 varianti di puro rumore la variante scelta sugli anni di training è quasi sempre la stessa (la migliore per caso sull'intero campione), e il suo Sharpe sugli anni di test resta positivo nel 94% delle combinazioni, perché i training si sovrappongono quasi del tutto. La distribuzione CPCV si legge quindi sempre insieme al PBO e al DSR, che su quello stesso rumore danno l'allarme (PBO 0,58).
+- MinBTL controllata: 13 anni e Sharpe 0,7 ammettono 24 prove indipendenti, 6 anni e Sharpe 1 ne ammettono 20.
 
 ## Prodotti
 
