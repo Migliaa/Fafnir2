@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 
-from . import catalogo, condizioni, dati, metriche, validazione
+from . import catalogo, condizioni, dati, giudizio, metriche, robustezza, uscita, validazione
 from .config import RECENTE, RISULTATI, SCOPERTA
 from .motori import backtest, eventi
 
@@ -263,3 +263,35 @@ def lancia(file, n_mc: int = 2000) -> dict:
 
 def riassunto(nome: str) -> dict:
     return json.loads((CARTELLA / nome / "riassunto.json").read_text(encoding="utf-8"))
+
+
+# ---------------------------------------------------------------- arricchimento per il cruscotto
+
+def arricchisci(nome: str) -> dict:
+    """Aggiunge a ogni candidato di un esperimento già lanciato robustezza, giudizio e ProRealCode.
+
+    Scrive `robustezza`, `giudizio` e `prorealcode` in `candidati/<id>.json`, il codice in `<id>.prc`, la
+    colonna `punti` nella tabella dei trade e l'esito di ogni candidato in `riassunto.json`. Sono prove
+    diagnostiche sul periodo della scoperta: il registro dei tentativi non si tocca."""
+    r = riassunto(nome)
+    cartella = CARTELLA / nome / "candidati"
+    ctx: dict = {}
+    for riga in r["candidati"]:
+        f = cartella / f"{riga['id']}.json"
+        c = json.loads(f.read_text(encoding="utf-8"))
+        regola, prod, barre = c["regola"], c["prodotto"], r["intestazione"]["barre"]
+        rob, trade = robustezza.calcola(regola, prod, barre, famiglia=c.get("famiglia"),
+                                        parametri=c.get("parametri"), ctx=ctx)
+        giud = giudizio.giudica(c.get("scheda"), rob)
+        prc = uscita.traduci(regola, prod, barre)
+        c.update(metriche.pulisci({"robustezza": rob, "giudizio": giud, "prorealcode": prc}))
+        f.write_text(json.dumps(c, ensure_ascii=False, indent=1), encoding="utf-8")
+        (cartella / f"{riga['id']}.prc").write_text(prc["codice"], encoding="utf-8")
+        trade.write_parquet(cartella / f"{riga['id']}_trade.parquet")
+        riga["esito"] = giud["esito"]
+        riga["gruppi"] = {k: g["esito"] for k, g in giud["gruppi"].items()}
+        riga["netto_euro"] = metriche.pulisci((rob.get("euro") or {}).get("profitto"))
+    r["arricchito"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    (CARTELLA / nome / "riassunto.json").write_text(
+        json.dumps(metriche.pulisci(r), ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    return r

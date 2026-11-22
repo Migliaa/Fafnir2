@@ -166,7 +166,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | fatta (2026-11-22), specifica in `spec-fase-6.md` |
 | 7 | primi esperimenti: long DAX a 5 minuti, poi setaccio e trapianti dei modelli 128 e 185 (coda e rapporto del mattino stanno fuori dal software) | |
 | 8 | `uscita` verso ProRealCode e `portafoglio` (delegabili) | |
-| 9 | `cruscotto` HTML per Andrea (delegabile con specifica) | |
+| 9 | `cruscotto`: applicazione locale per Andrea (`progetto-cruscotto.md`, `spec-cruscotto.md`) | prima versione fatta (2026-11-22): `python -m cruscotto` |
 
 Dalla fase 3 ogni modulo nuovo espone già le sue funzioni alla `cli` e scrive il riassunto JSON, così l'interfaccia per l'IA cresce insieme al motore invece di essere aggiunta alla fine.
 

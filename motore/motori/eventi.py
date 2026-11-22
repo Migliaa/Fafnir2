@@ -126,8 +126,10 @@ def candidati(tabella: pl.DataFrame, regola: dict) -> np.ndarray:
     return tabella.with_row_index("i").filter(filtro)["i"].to_numpy().astype(np.int64)
 
 
-def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = None) -> dict:
-    """Restituisce (riassunto JSON, tabella dei trade)."""
+def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = None,
+          molt_costi: float = 1.0) -> dict:
+    """Restituisce (riassunto JSON, tabella dei trade). `molt_costi` moltiplica i costi del catalogo
+    (2.0 = costi doppi); la colonna `punti` è il netto in punti di prezzo."""
     b = base(nome, minuti) if tabella is None else tabella
     lato = int(regola["lato"])
     cand = candidati(b, regola)
@@ -146,9 +148,11 @@ def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = N
     prod = catalogo.prodotto(nome)
     ore = b["apre"].dt.hour().to_numpy()[ent] + b["apre"].dt.minute().to_numpy()[ent] / 60
     costo = prod.costo(ore, arr["o"][ent], dn[usc] - dn[ent])
-    netto = lordo - (0 if costo is None else costo / esc)
+    costo_p = 0.0 if costo is None else molt_costi * costo
+    netto = lordo - costo_p / esc
+    punti = lato * (px - arr["o"][ent]) - costo_p
     trade = pl.DataFrame({"ingresso": b["apre"].gather(ent), "uscita": b["apre"].gather(usc),
-                          "barre": usc - ent, "lordo": lordo, "netto": netto})
+                          "barre": usc - ent, "lordo": lordo, "netto": netto, "punti": punti})
     return _riassunto(nome, minuti, regola, trade, b, costo is not None), trade
 
 

@@ -32,6 +32,7 @@ class Prodotto:
     adatto: bool = True
     verificato: bool = False
     note: str = ""
+    euro_punto: float | None = None   # valore di 1 CFD IG per punto di prezzo (indici: 1 per punto); None se non noto
 
     def spread_a(self, ore: np.ndarray) -> np.ndarray:
         """Spread in punti per ogni ora d'ingresso (ore decimali italiane)."""
@@ -61,12 +62,12 @@ CATALOGO: dict[str, Prodotto] = {p.nome: p for p in [
     # indici: versione cash a 1 euro/dollaro per punto
     _P("FDAX", "indici europei", ("FESX",), True, 7.0,
        ((9, 17.5, 1.2), (8, 9, 2.0), (17.5, 22, 2.0)), IND,
-       note="Germany 40; sessione notturna Eurex dalla fine del 2018"),
-    _P("FESX", "indici europei", ("FDAX",), True, 3.0, ((8, 22, 1.5), (1.25, 8, 2.0)), IND),
-    _P("ES", "indici USA", ("NQ", "YM", "RTY"), True, 1.0, ((15.5, 22, 0.7), (23, 24, 1.8)), IND),
-    _P("NQ", "indici USA", ("ES", "YM", "RTY"), True, 2.9, ((15.5, 22, 1.4), (23, 24, 6.0)), IND),
-    _P("YM", "indici USA", ("ES", "NQ"), True, 4.8, ((15.5, 22, 2.4), (8, 15.5, 3.6), (23, 24, 9.8)), IND),
-    _P("RTY", "indici USA", ("ES",), True, 0.3, ((23, 24, 0.8),), IND),
+       euro_punto=1.0, note="Germany 40; sessione notturna Eurex dalla fine del 2018"),
+    _P("FESX", "indici europei", ("FDAX",), True, 3.0, ((8, 22, 1.5), (1.25, 8, 2.0)), IND, euro_punto=1.0),
+    _P("ES", "indici USA", ("NQ", "YM", "RTY"), True, 1.0, ((15.5, 22, 0.7), (23, 24, 1.8)), IND, euro_punto=1.0),
+    _P("NQ", "indici USA", ("ES", "YM", "RTY"), True, 2.9, ((15.5, 22, 1.4), (23, 24, 6.0)), IND, euro_punto=1.0),
+    _P("YM", "indici USA", ("ES", "NQ"), True, 4.8, ((15.5, 22, 2.4), (8, 15.5, 3.6), (23, 24, 9.8)), IND, euro_punto=1.0),
+    _P("RTY", "indici USA", ("ES",), True, 0.3, ((23, 24, 0.8),), IND, euro_punto=1.0),
     _P("VX", "volatilità", ("ES",), True, 0.1, note="VIX con scadenza: niente finanziamento"),
     # cambi
     _P("AUDJPY", "cambi yen", ("NZDJPY", "CADJPY", "GBPJPY"), True, **_fx(0.01, 1.79)),
@@ -134,4 +135,5 @@ def prodotto(nome: str) -> Prodotto:
 
 def riassunto() -> list[dict]:
     return [{"nome": p.nome, "gruppo": p.gruppo, "ig": p.ig, "adatto": p.adatto,
-             "costi": p.spread is not None, "gemelli": list(p.gemelli)} for p in CATALOGO.values()]
+             "costi": p.spread is not None, "gemelli": list(p.gemelli),
+             "euro_punto": p.euro_punto} for p in CATALOGO.values()]
