@@ -164,7 +164,7 @@ Un modulo per sessione di lavoro, per non consumare tutti i token insieme. Il di
 | 3 | `catalogo` (orari, costi, gemelli) e `motori/mappa`; taratura su AUDJPY e DAX | fatta (2026-11-22): AUDJPY ritrovato, DAX rimandato alla fase 5 |
 | 4 | `metriche` e `validazione` (delegabile con specifica) | fatta (2026-11-22), specifica in `spec-fase-4.md` |
 | 5 | `condizioni` (libreria a famiglie) e `motori/eventi`; taratura su 185 NQ e oro | fatta (2026-11-22): long di 165 DAX e short dell'oro ritrovati, gli altri tre deboli |
-| 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | |
+| 6 | `motori/backtest` con numba; `cli` e formato dei file d'esperimento | fatta (2026-11-22), specifica in `spec-fase-6.md` |
 | 7 | `coda` notturna e rapporto del mattino; primi esperimenti: setaccio e trapianti dei modelli 128 e 185 | |
 | 8 | `uscita` verso ProRealCode e `portafoglio` (delegabili) | |
 | 9 | `cruscotto` HTML per Andrea (delegabile con specifica) | |
@@ -193,12 +193,17 @@ Comandi: `python -m motore.cli mappa calcola|migliori|cella <prodotto> --barre 6
 | 165 DAX long | 590 | +0,075 | 1,24 | 10 su 13 | +0,058 | +0,019 |
 | 165 DAX short | 536 | +0,022 | 1,11 | 8 su 13 | −0,024 | +0,007 |
 | 185 NQ short | 105 | +0,017 (lorda +0,087) | 1,03 | 6 su 13 | +0,068 | −0,156 |
-| 185 oro long | 529 | +0,005 (lorda +0,057) | 1,01 | 7 su 13 | −0,002 | −0,068 |
-| 185 oro short | 154 | +0,193 | 1,43 | 8 su 13 | +0,196 | −0,002 |
+| 185 oro long | 257 | +0,040 (lorda +0,094) | 1,08 | 7 su 13 | +0,093 | −0,097 |
+| 185 oro short | 96 | +0,286 | 1,73 | 9 su 13 | +0,274 | +0,063 |
 
 - Il long di 165 DAX c'è, e senza le sue due condizioni la stessa finestra dava zero (taratura della fase 3): il vantaggio sta nelle condizioni, come atteso. Lo short dell'oro c'è con il profit factor più alto. Le due gambe valgono più dello specchio, quindi non sono andamento generale del prodotto.
-- Lo short di 165 DAX, lo short del Nasdaq e il long dell'oro sui futures 2011-2023 sono vicini a zero. Aggiungere stop e target convertiti in escursioni (circa 2 escursioni di stop, target come nel codice) non cambia il quadro. Il Nasdaq short vive di pochi anni (2020 e 2022) con 105 trade in 13 anni, e il costo di tenerlo fino a 4 giorni mangia quattro quinti del lordo.
-- Cause possibili, da controllare prima di dire che quelle gambe sono fragili: l'apertura della giornata (`DOpen`) di ProRealTime sui CFD IG americani e sull'oro potrebbe non essere la mezzanotte italiana usata qui; il long dell'oro nel codice ha anche la condizione "nuovo massimo", non ancora tradotta; i sistemi sono stati scelti su backtest IG che arrivano al 2026, e gli anni 2024-2025 qui non si guardano.
+- Le due gambe dell'oro includono la condizione della barra che rompe il massimo (o il minimo) della precedente di 0,5% (`ptnl25`/`ptns25`, tradotta come 0,4 escursioni): senza, il long rendeva +0,005 e lo short +0,193.
+- Lo short di 165 DAX, lo short del Nasdaq e, in misura minore, il long dell'oro sui futures 2011-2023 sono deboli. Aggiungere stop e target convertiti in escursioni (circa 2 escursioni di stop, target come nel codice) non cambia il quadro. Il Nasdaq short vive di pochi anni (2020 e 2022) con 105 trade in 13 anni, e il costo di tenerlo fino a 4 giorni mangia quattro quinti del lordo.
+- L'apertura della giornata non è la causa: sui grafici di Andrea (US Tech 100 continuo a mezzanotte, oro fermo dalle 23:00 alle 00:00) la giornata di ProRealTime comincia a mezzanotte italiana, come qui e come la pausa del Globex. Restano due spiegazioni: i sistemi sono stati scelti su backtest IG che arrivano al 2026 (il 2024-2025 qui non si guarda), e su quelle gambe il risultato dipende da pochi anni.
+
+**Fase 6.** Il backtest al minuto dà gli stessi trade del motore degli eventi quando non ci sono stop e target (165 DAX long: 590 trade, stessa media), e se ci sono decide l'ordine fra stop e target dentro la barra guardando i minuti. Un file d'esperimento non parte se manca un campo, se la griglia sfora il numero di prove ammesso dalla MinBTL (dimezzato in verticale, contando quelle già nel registro per la stessa famiglia) o se è già stato lanciato. Il lancio registra ogni combinazione, calcola PBO, CPCV e DSR per famiglia e prodotto, passa i primi 10 al backtest al minuto con la scheda completa e scrive il riassunto in `risultati/esperimenti/<nome>/`.
+
+Una nota dalla prova sull'oro: lo stop di 1,7 escursioni (il 2% del codice) porta lo short da +0,29 a +0,12 escursioni per trade; 13 trade su 98 escono in stop. Va guardato nel setaccio, perché su quella gamba lo stop toglie più di quanto protegge.
 
 ## Prodotti
 

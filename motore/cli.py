@@ -8,6 +8,8 @@ Uso (dalla cartella del progetto):
   python -m motore.cli eventi FDAX esperimenti/regola.json --barre 30 --specchio
   python -m motore.cli minbtl --sr 0.7 --anni 13 [--prove 50]
   python -m motore.cli registro stato [--famiglia X]
+  python -m motore.cli backtest FDAX esperimenti/regola.json --barre 30
+  python -m motore.cli esperimento controlla|lancia|riassunto <file.json | nome>
 """
 from __future__ import annotations
 
@@ -17,8 +19,8 @@ import sys
 
 from pathlib import Path
 
-from . import catalogo, condizioni, metriche, validazione
-from .motori import eventi, mappa
+from . import catalogo, condizioni, esperimento, metriche, validazione
+from .motori import backtest, eventi, mappa
 
 
 def main(argv: list[str] | None = None) -> None:
@@ -47,6 +49,13 @@ def main(argv: list[str] | None = None) -> None:
     e.add_argument("regola")
     e.add_argument("--barre", type=int, default=60)
     e.add_argument("--specchio", action="store_true", help="prova anche la regola speculare")
+    t = sub.add_parser("backtest", help="regola con stop, target e pareggio controllati sui minuti")
+    t.add_argument("prodotto")
+    t.add_argument("regola")
+    t.add_argument("--barre", type=int, default=60)
+    x = sub.add_parser("esperimento", help="controlla o lancia un file d'esperimento, o ne stampa il riassunto")
+    x.add_argument("azione", choices=["controlla", "lancia", "riassunto"])
+    x.add_argument("bersaglio", help="file .json (controlla, lancia) o nome dell'esperimento (riassunto)")
     a = p.parse_args(argv)
 
     if a.cmd == "eventi":
@@ -56,6 +65,16 @@ def main(argv: list[str] | None = None) -> None:
         out = {"regola": eventi.prova(a.prodotto, a.barre, regola, tab)[0]}
         if a.specchio:
             out["specchio"] = eventi.prova(a.prodotto, a.barre, condizioni.specchia(regola), tab)[0]
+    elif a.cmd == "backtest":
+        testo = Path(a.regola).read_text(encoding="utf-8") if a.regola.endswith(".json") else a.regola
+        out = {"regola": backtest.simula(a.prodotto, a.barre, json.loads(testo))[0]}
+    elif a.cmd == "esperimento":
+        if a.azione == "controlla":
+            out = esperimento.controlla(a.bersaglio)
+        elif a.azione == "lancia":
+            out = esperimento.lancia(a.bersaglio)
+        else:
+            out = esperimento.riassunto(a.bersaglio)
     elif a.cmd == "catalogo":
         out = catalogo.riassunto()
     elif a.cmd == "minbtl":

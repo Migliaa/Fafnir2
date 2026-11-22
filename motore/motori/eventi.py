@@ -112,9 +112,8 @@ def _simula(cand, o, h, l, esc, tod, giorno, dn, lato, barre, ora, ven, giorni, 
     return ent[:k], usc[:k], px[:k]
 
 
-def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = None) -> dict:
-    """Restituisce (riassunto JSON, tabella dei trade)."""
-    b = base(nome, minuti) if tabella is None else tabella
+def candidati(tabella: pl.DataFrame, regola: dict) -> np.ndarray:
+    """Indici delle barre di decisione (righe della tabella) in cui la regola d'ingresso è vera."""
     lato = int(regola["lato"])
     filtro = pl.col("esc").is_not_null() & (pl.col("esc") > 0)
     if regola.get("giorni"):
@@ -124,7 +123,14 @@ def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = N
         filtro &= pl.col("tod").is_between(da, a) if da <= a else ~pl.col("tod").is_between(a + 1, da - 1)
     for cond in regola.get("cond", []):
         filtro &= condizioni.condizione(cond, lato).fill_null(False)
-    cand = b.with_row_index("i").filter(filtro)["i"].to_numpy().astype(np.int64)
+    return tabella.with_row_index("i").filter(filtro)["i"].to_numpy().astype(np.int64)
+
+
+def prova(nome: str, minuti: int, regola: dict, tabella: pl.DataFrame | None = None) -> dict:
+    """Restituisce (riassunto JSON, tabella dei trade)."""
+    b = base(nome, minuti) if tabella is None else tabella
+    lato = int(regola["lato"])
+    cand = candidati(b, regola)
 
     u = regola.get("uscita", {})
     arr = {x: b[x].to_numpy() for x in ("o", "h", "l", "esc")}

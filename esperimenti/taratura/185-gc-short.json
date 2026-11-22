@@ -1,3 +1,1 @@
-{"lato": -1, "da": "11:00", "a": "22:00",
- "cond": [["dist_apertura:200", ">=", 5.5], ["inversione_ieri", "==", 0, "grezza"]],
- "uscita": {"giorni": 4}}
+{"lato": -1, "da": "11:00", "a": "22:00", "cond": [["dist_apertura:200", ">=", 5.5], ["rottura_barra", ">", 0.4], ["inversione_ieri", "==", 0, "grezza"]], "uscita": {"giorni": 4}}

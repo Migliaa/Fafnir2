@@ -110,3 +110,17 @@ def barre(nome: str, minuti: int, cache: bool = True) -> pl.DataFrame:
             df.write_parquet(file)
     controlla_taglio(df)
     return df
+
+
+def minuti(nome: str, cache: bool = True) -> pl.DataFrame:
+    """Barre da 1 minuto (colonne `apre o h l c`) di un simbolo o di un cross sintetico, con cache su disco."""
+    file = CACHE / f"{nome}_1m_{TAGLIO:%Y%m%d}.parquet"
+    if cache and file.exists():
+        df = pl.read_parquet(file)
+    else:
+        df = _sorgente(nome).select("apre", "o", "h", "l", "c")
+        if cache:
+            CACHE.mkdir(parents=True, exist_ok=True)
+            df.write_parquet(file)
+    controlla_taglio(df)
+    return df

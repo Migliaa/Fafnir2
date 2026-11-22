@@ -64,6 +64,8 @@ FAMIGLIE = {
     # distanza dal minimo di ieri (3251: non sotto il minimo di ieri, >= 0)
     "dal_minimo_ieri": (lambda: (c - pl.col("l1")) / ESC, lambda: (pl.col("h1") - c) / ESC),
     "gap": (lambda: (pl.col("dopen") - pl.col("c1")) / ESC, lambda: (pl.col("c1") - pl.col("dopen")) / ESC),
+    # massimo della barra sopra quello della barra prima (185 oro: +0,5% ~ 0,4 escursioni)
+    "rottura_barra": (lambda: (h - h.shift(1)) / ESC, lambda: (l.shift(1) - l) / ESC),
     "escursione_oggi": (lambda: (pl.col("dmax") - pl.col("dmin")) / ESC,) * 2,
     # media semplice di a barre che incrocia sopra quella di b (185 NQ long)
     "incrocio": (lambda a=5, b=10: _incrocio(c.rolling_mean(a), c.rolling_mean(b)),
