@@ -514,19 +514,20 @@ async function paginaRicerche() {
     l.length ? h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, [['Ricerca', 'sx'], ['Lanciata'], ['Prodotto'], ['Regole semplici'], ['Radici approfondite'], ['Prove totali'], ['Risultato']].map(([t, c]) => h('th', { class: c || null }, t)))),
       h('tbody', {}, l.map(riga)))) : h('p', { class: 'muto' }, 'Nessuna ricerca. Comando: python -m motore.albero lancia esperimenti/<nome>.json'));
 }
-const STRATI_NOME = { ampiezza: 'Regole provate', L0: 'Primo setaccio', radici: 'Radici scelte', L1: 'Controllo della radice', L2: 'Ingressi', L3: 'Uscite', L4: 'Verifica', finale: 'Da provare su ProRealTime' };
-const STRATI_COL = { ampiezza: 'var(--f-in)', L0: 'var(--f-in)', radici: 'var(--f-in)', L1: 'var(--f-vic)', L2: 'var(--f-vic)', L3: 'var(--f-vic)', L4: 'var(--f-wf)', finale: 'var(--f-out)' };
+const STRATI_NOME = { forza: 'Forza bruta', filtro1: 'Filtro 1', molt1: 'Moltiplicazione 1', filtro2: 'Filtro 2', molt2: 'Moltiplicazione 2', filtro3: 'Filtro 3: i finali',
+  ampiezza: 'Regole provate', L0: 'Primo setaccio', radici: 'Radici scelte', L1: 'Controllo della radice', L2: 'Ingressi', L3: 'Uscite', L4: 'Verifica', finale: 'Da provare su ProRealTime' };
+const STRATI_COL = { forza: 'var(--f-wf)', filtro1: 'var(--f-in)', molt1: 'var(--f-wf)', filtro2: 'var(--f-in)', molt2: 'var(--f-wf)', filtro3: 'var(--f-in)', ampiezza: 'var(--f-in)', L0: 'var(--f-in)', radici: 'var(--f-in)', L1: 'var(--f-vic)', L2: 'var(--f-vic)', L3: 'var(--f-vic)', L4: 'var(--f-wf)', finale: 'var(--f-out)' };
 /* Imbuto: una riga per strato, barra lunga in proporzione (scala logaritmica) al numero di regole che lo passano. */
 function imbutoSVG(imb) {
-  const W = 600, RH = 34, H = imb.length * RH + 6, max = Math.log10((imb[0].n || 1) + 1), L = 180, BW = W - L - 80;
+  const W = 640, RH = 34, H = imb.length * RH + 6, max = Math.log10(Math.max(...imb.map(x => x.n || 1)) + 1), L = 190, BW = W - L - 150;
   const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'imbuto-svg', role: 'img', 'aria-label': 'Quante regole passano ogni strato' });
   imb.forEach((x, k) => {
     const y = 4 + k * RH, w = x.n ? Math.max(4, BW * Math.log10(x.n + 1) / max) : 0, cx = L + BW / 2;
     svg.append(sv('text', { x: L - 12, y: y + RH / 2 + 4, 'text-anchor': 'end', style: 'fill:var(--testo);font-size:13px' }, STRATI_NOME[x.strato] || x.nome));
     svg.append(sv('rect', { x: cx - BW / 2, y: y + 5, width: BW, height: RH - 10, rx: 4, style: 'fill:var(--bordo);opacity:.35' }));
     if (w) svg.append(sv('rect', { x: cx - w / 2, y: y + 5, width: w, height: RH - 10, rx: 4, style: `fill:${STRATI_COL[x.strato] || 'var(--f-in)'}` }, sv('title', {}, x.nome)));
-    svg.append(sv('text', { x: L + BW + 12, y: y + RH / 2 + 5, style: `font-size:15px;font-weight:700;fill:${x.n ? 'var(--testo)' : 'var(--rosso)'}` }, String(x.n)));
-    if (x.provati != null) svg.append(sv('text', { x: L + BW + 40, y: y + RH / 2 + 5, style: 'font-size:11px;fill:var(--muto)' }, `su ${x.provati}`));
+    svg.append(sv('text', { x: L + BW + 12, y: y + RH / 2 + 5, style: `font-size:15px;font-weight:700;fill:${x.n ? 'var(--testo)' : 'var(--rosso)'}` }, nf(x.n, 0)));
+    if (x.provati != null) svg.append(sv('text', { x: L + BW + 12 + 9 * String(x.n).length, y: y + RH / 2 + 5, style: 'font-size:11px;fill:var(--muto)' }, x.tipo === 'filtra' ? ` scelte fra ${nf(x.provati, 0)} che passano` : ` su ${nf(x.provati, 0)} provate`));
   });
   return svg;
 }
@@ -541,9 +542,15 @@ const motivoChiaro = m => { if (!m) return ''; const x = MOTIVI_CHIARI.find(([re
 function perche(a) {
   const conta = {};
   a.nodi.filter(n => n.esito === 'scartato').forEach(n => { const k = motivoChiaro(n.motivo); conta[k] = (conta[k] || 0) + 1; });
-  a.foglie.filter(f => f.esito !== 'candidato').forEach(f => { const k = 'sistemi finali: ' + motivoChiaro(f.motivo); conta[k] = (conta[k] || 0) + 1; });
-  const righe = Object.entries(conta).sort((x, y) => y[1] - x[1]).slice(0, 5);
-  return righe.length ? h('div', {}, h('div', { class: 'et' }, 'Perché si fermano'), h('ul', { class: 'perche' }, righe.map(([t, n]) => h('li', {}, h('strong', {}, String(n)), ' ', t)))) : null;
+  (a.cicli || []).forEach(c => Object.entries(c.motivi || {}).forEach(([m, n]) => { conta[m] = (conta[m] || 0) + n; }));
+  const fin = {};
+  a.foglie.filter(f => f.esito !== 'candidato').forEach(f => (f.porte || []).filter(p => p.esito === 'rosso' || p.esito === 'grigio')
+    .forEach(p => { const k = motivoChiaro(p.nome); fin[k] = (fin[k] || 0) + 1; }));
+  const righe = Object.entries(conta).sort((x, y) => y[1] - x[1]).slice(0, 4);
+  const righeF = Object.entries(fin).sort((x, y) => y[1] - x[1]);
+  if (righeF.length) return h('div', {}, h('div', { class: 'et' }, 'Perché si fermano'), h('ul', { class: 'perche' }, righe.map(([t, n]) => h('li', {}, h('strong', {}, nf(n, 0)), ' ', t))),
+    h('div', { class: 'et' }, `I ${a.foglie.length} sistemi finali`), h('ul', { class: 'perche' }, righeF.map(([t, n]) => h('li', {}, h('strong', {}, String(n)), ' ', t))));
+  return righe.length ? h('div', {}, h('div', { class: 'et' }, 'Perché si fermano'), h('ul', { class: 'perche' }, righe.map(([t, n]) => h('li', {}, h('strong', {}, nf(n, 0)), ' ', t)))) : null;
 }
 function vicini(a) {
   const l0 = a.nodi.filter(n => n.livello === 'L0').sort((x, y) => (y.misure.M || 0) - (x.misure.M || 0)).slice(0, 10);
@@ -602,7 +609,7 @@ async function paginaRicerca(nome) {
   const risultato = cand.length ? h('p', { class: 'grande-esito pos' }, `${cand.length} ${cand.length === 1 ? 'sistema da provare' : 'sistemi da provare'} su ProRealTime.`)
     : h('p', { class: 'grande-esito' }, 'Nessun sistema da provare su ProRealTime.');
   vedi(mio, h('p', {}, h('a', { href: '#/ricerche' }, '← Ricerche')), h('h1', {}, nome),
-    h('p', { class: 'muto' }, `${ih.prodotto} ${ih.barre} min · lanciata il ${dataIt(a.quando)} · ${a.prove} prove in ${nf(a.durata_s, 0)} secondi · in-sample ${a.anni[0]}-${a.anni[1]} · euro di oggi: 1 escursione = ${nf(a.euro_per_escursione_oggi, 0)} €`),
+    h('p', { class: 'muto' }, `${ih.prodotto} ${ih.barre} min · lanciata il ${dataIt(a.quando)} · ${nf(a.prove, 0)} prove in ${nf(a.durata_s, 0)} secondi · in-sample ${a.anni[0]}-${a.anni[1]} · euro di oggi: 1 escursione = ${nf(a.euro_per_escursione_oggi, 0)} €`),
     h('div', { class: 'pannello' }, risultato, h('div', { class: 'imbuto-riga' }, a.imbuto ? imbutoSVG(a.imbuto) : null, perche(a)),
       h('p', { class: 'muto' }, 'La lunghezza delle barre è in scala logaritmica. ', h('a', { href: '#/come-funziona' }, 'Cosa fa ogni strato'))),
     cand.length ? h('div', {}, h('h2', {}, 'Da provare su ProRealTime'), cand.map(f => schedaFoglia(a, f))) : null,
@@ -610,12 +617,20 @@ async function paginaRicerca(nome) {
     !a.foglie.length ? h('div', {}, h('h2', {}, 'Le regole arrivate più vicine'), h('p', { class: 'muto' }, 'Le dieci con il margine più alto. Nessuna arriva in fondo; servono a capire quanto manca.'), vicini(a)) : null,
     h('h2', {}, 'Dettagli'),
     sezione('Diario della ricerca', () => diarioLista(a.diario)),
+    a.cicli ? sezione('Cosa è passato da ogni filtro', () => h('div', {}, a.cicli.map(c => h('div', {}, h('h3', {}, `${STRATI_NOME[c.strato] || c.nome}: ${c.semi} scelte su ${nf(c.n, 0)} che passano`),
+      c.motivi && Object.keys(c.motivi).length ? h('p', { class: 'muto' }, 'Scartate: ' + Object.entries(c.motivi).map(([m, n]) => `${nf(n, 0)} ${m}`).join(' · ')) : null,
+      tabellaRegole(c.migliori))))) : null,
     sezione('Radici approfondite e loro rami', () => ramiTabella(a)),
     a.walkforward_ricerca ? sezione('Walk-forward dell\'intera ricerca', () => h('table', {}, h('thead', {}, h('tr', {}, ['Anno', 'Cosa avrebbe scelto la ricerca con gli anni prima', 'Trade', 'Esc. a trade'].map(t => h('th', {}, t)))),
       h('tbody', {}, a.walkforward_ricerca.anni.map(r => h('tr', {}, h('td', {}, r.anno), h('td', { class: 'sx' }, r.etichetta), h('td', {}, r.n), h('td', { class: segno(r.media_esc) }, nf(r.media_esc, 3))))))) : null,
     sezione('Ipotesi e ingressi dichiarati prima', () => h('div', {}, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
       h('ul', {}, (ih.ingressi || []).map(ip => h('li', {}, h('strong', {}, ip.nome), ` (${ip.grandezza} ${ip.op} ${ip.soglie.join(' / ')}): ${ip.meccanismo}`))))),
-    sezione('Tutte le regole semplici provate', () => tutteRegole(a), `${a.nodi.filter(n => n.livello === 'L0').length}`));
+    a.cicli ? null : sezione('Tutte le regole semplici provate', () => tutteRegole(a), `${a.nodi.filter(n => n.livello === 'L0').length}`));
+}
+function tabellaRegole(l) {
+  return h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, [['', ''], ['Regola', 'sx'], ['€ a trade', '', 'Con la volatilità di oggi, 1 CFD IG, netto'], ['Trade l’anno'], ['Ore'], ['t'], ['R²'], ['Batte il caso', '', 'Quota di filtri a caso che toglierebbero la stessa quota di trade al genitore e farebbero peggio']].map(([t, c, ti]) => h('th', { class: c || null, title: ti || null }, t)))),
+    h('tbody', {}, l.map(r => h('tr', {}, h('td', {}, miniGrafico({ y: r.mini })), h('td', { class: 'sx desc' }, r.etichetta), h('td', { class: (r.G || 0) >= 1 ? 'pos' : '' }, nE(r.euro_oggi)),
+      h('td', {}, nf(r.trade_anno, 0)), h('td', {}, nf(r.ore, 1)), h('td', {}, nf(r.t, 1)), h('td', {}, nf(r.r2, 2)), h('td', {}, r.quantile == null ? '–' : pc(r.quantile)))))));
 }
 function tutteRegole(a) {
   let n_ = 60;
@@ -699,7 +714,7 @@ function disegnoAmpiezza() {
     const v = R(), forte = v > 0.47, medio = v > 0.38;
     g.append(sv('rect', { x: 40 + i * 19, y: 14 + j * 14, width: 15, height: 11, rx: 2, style: `fill:${forte ? 'var(--f-in)' : 'var(--bordo)'};opacity:${forte ? 1 : medio ? .7 : .35}` }));
   }
-  g.append(tx(40, 158, 'ora d\'ingresso: 15 →'), tx(4, 14, 'condizione'), tx(4, 26, '9 ↓'), tx(250, 158, '× 4 uscite = 540'));
+  g.append(tx(40, 158, "ora d'ingresso: 166 →"), tx(4, 14, 'pattern'), tx(4, 26, '50 ↓'), tx(222, 158, '× 8 uscite = 66.400'));
   return g;
 }
 function disegnoL0() {
@@ -756,49 +771,80 @@ function disegnoFinale() {
   parti.forEach(([t, w, c, sotto]) => { const ww = w * 3.4; g.append(sv('rect', { x, y: 50, width: ww - 3, height: 34, rx: 3, style: `fill:${c};opacity:.85` }), tx(x + 3, 44, t, 'fill:var(--testo)'), tx(x + 3, 102, sotto)); x += ww; });
   return g;
 }
+function disegnoMoltiplica(etichette) {
+  const g = tela(), x0 = 40, y0 = 85;
+  g.append(sv('circle', { cx: x0, cy: y0, r: 10, style: 'fill:var(--f-in)' }), tx(x0 - 14, y0 + 28, 'seme'));
+  etichette.forEach((e, i) => {
+    const y = 14 + i * (140 / (etichette.length - 1)), forte = e[1];
+    g.append(sv('line', { x1: x0 + 10, y1: y0, x2: 200, y2: y, style: `stroke:${forte ? 'var(--f-wf)' : 'var(--bordo)'};stroke-width:${forte ? 2 : 1}` }),
+      sv('circle', { cx: 204, cy: y, r: 5, style: `fill:${forte ? 'var(--f-wf)' : 'var(--bordo)'}` }), tx(214, y + 4, e[0], forte ? 'fill:var(--testo)' : ''));
+  });
+  return g;
+}
+function disegnoFiltro() {
+  const g = tela();
+  for (let i = 0; i < 40; i++) { const x = 20 + (i % 20) * 16, y = 30 + Math.floor(i / 20) * 26, ok = [3, 11, 17, 26, 34].includes(i); g.append(sv('circle', { cx: x, cy: y, r: 6, style: `fill:${ok ? 'var(--f-in)' : 'var(--bordo)'};opacity:${ok ? 1 : .6}` })); }
+  g.append(sv('path', { d: 'M20 95 L340 95 L230 130 L130 130 Z', style: 'fill:var(--bordo);opacity:.5' }));
+  [150, 180, 210].forEach(x => g.append(sv('circle', { cx: x, cy: 150, r: 6, style: 'fill:var(--f-in)' })));
+  g.append(tx(250, 155, 'semi diversi fra loro'));
+  return g;
+}
 const STRATI = [
-  { id: 'ampiezza', titolo: 'Ampiezza', sotto: 'molte regole semplici', disegno: disegnoAmpiezza,
-    cosa: 'Prova tutte le combinazioni di poche scelte semplici: ora d\'ingresso, una condizione sulla giornata, uscita.',
-    filtro: ['Nessun filtro qui: ogni regola è una prova e finisce nel registro.'],
-    perche: 'Trovare dove c\'è qualcosa senza inventare regole complicate.' },
-  { id: 'L0', titolo: 'Primo setaccio', sotto: 'guadagno, margine, non caso', disegno: disegnoL0,
-    cosa: 'Tiene le regole che o guadagnano già abbastanza a trade, o hanno margine per arrivarci con un filtro.',
-    filtro: ['Guadagno medio sopra la soglia (20/30/50 € secondo la durata) oppure margine almeno 1,5', 'Guadagno medio lontano dal caso (t almeno 2)', 'Almeno 6 trade l\'anno', 'Positiva sugli anni lasciati fuori (CPCV, sotto)'],
-    perche: 'Un filtro toglie trade, non ne aggiunge: se l\'utile dell\'anno non basta, nessun filtro salverà la regola.' },
-  { id: 'radici', titolo: 'Scelta delle radici', sotto: 'le migliori, diverse', disegno: disegnoRadici,
-    cosa: 'Fra quelle che passano prende le 10 migliori, saltando quelle che guadagnano negli stessi giorni di una già presa.',
-    filtro: ['Ordine: copertura della soglia × regolarità × distanza dal caso', 'Saltata se i risultati giornalieri sono correlati oltre 0,7 con una già scelta'],
-    perche: 'Dieci varianti della stessa idea sono un\'idea sola: meglio approfondire idee diverse.' },
-  { id: 'L1', titolo: 'Controllo della radice', sotto: 'gemello, metà, segnale', disegno: disegnoL1,
-    cosa: 'Verifica che il vantaggio sia della regola e non del DAX che sale.',
-    filtro: ['Stessa regola sull\'Euro Stoxx: deve guadagnare anche lì', 'Positiva sia nel 2014-2018 sia nel 2019-2023', 'Segnale isolato: guadagno meno quello della stessa ora in tutti i giorni, almeno metà del totale'],
+  { id: 'forza', titolo: 'Forza bruta', sotto: 'ora × uscita × pattern', disegno: disegnoAmpiezza,
+    cosa: 'Prova tutte le combinazioni: ogni ora d\'ingresso (ogni 5 minuti), ogni uscita, nessun pattern o un pattern di struttura del prezzo.',
+    filtro: ['Nessun filtro: ogni regola è una prova e conta nel totale', 'Sul DAX a 5 minuti: 166 orari × 8 uscite × 50 = 66.400 regole in circa 15 secondi'],
+    perche: 'Trovare gli orari e le situazioni in cui il DAX tende a salire, senza scegliere a occhio.' },
+  { id: 'filtro1', titolo: 'Filtro 1', sotto: 'i semi', disegno: disegnoL0,
+    cosa: 'Tiene le regole che guadagnano già abbastanza a trade o che possono arrivarci con un filtro, e fra queste sceglie i semi diversi fra loro.',
+    filtro: ['Guadagno sopra la soglia (20/30/50 € per durata) o margine almeno 1', 'Guadagno lontano dal caso (t almeno 2), almeno 6 trade l\'anno', 'Positiva sugli anni lasciati fuori e in entrambe le metà del periodo', 'Una regola che guadagna negli stessi giorni di un seme già scelto (correlazione oltre 0,9) è un doppione'],
+    perche: 'Un filtro toglie trade, non ne aggiunge: se il margine non c\'è, nessuna combinazione lo crea.' },
+  { id: 'molt1', titolo: 'Moltiplicazione 1', sotto: '+ un pattern o un indicatore', disegno: () => disegnoMoltiplica([['+ ieri giornata interna', 0], ['+ sopra media 50 giorni', 1], ['+ RSI 14 sopra 70', 0], ['+ barra verde', 0], ['+ ADX sotto 20', 1], ['+ gap in giù', 0]]),
+    cosa: 'Ogni seme si combina con ogni altro pattern di struttura e con indicatori e candele sulle barre: da un seme nascono decine di regole.',
+    filtro: ['Nessun filtro: ogni combinazione è una prova'],
+    perche: 'Due condizioni insieme possono isolare i giorni giusti meglio di una sola.' },
+  { id: 'filtro2', titolo: 'Filtro 2', sotto: 'meglio del genitore e del caso', disegno: disegnoL2,
+    cosa: 'Le combinazioni restano solo se il pattern aggiunto sa qualcosa: confrontate con il seme da cui vengono e con filtri a caso.',
+    filtro: ['Le porte del filtro 1, con margine almeno 1,5', 'Batte il 95% dei filtri a caso che tolgono la stessa quota di trade', 'Migliora il seme in almeno 2 terzi del periodo su 3', 'I trade tolti vanno peggio di quelli tenuti'],
+    perche: 'Scegliere i giorni migliori fra tanti riesce anche a caso: serve battere il caso.' },
+  { id: 'molt2', titolo: 'Moltiplicazione 2', sotto: 'regime, calendario, uscite, orari', disegno: () => disegnoMoltiplica([['+ periodo agitato', 0], ['+ non venerdì', 1], ['+ fine mese', 0], ['altre 7 uscite', 0], ['15 e 30 minuti prima', 1], ['15 e 30 minuti dopo', 0]]),
+    cosa: 'I semi rimasti si combinano con i filtri di regime e di calendario e si provano con le altre uscite e con l\'ingresso spostato.',
+    filtro: ['Nessun filtro: ogni variante è una prova'],
+    perche: 'Le uscite e i filtri di contorno si provano solo su regole che hanno già superato due filtri.' },
+  { id: 'filtro3', titolo: 'Filtro 3', sotto: 'i finali, diversi', disegno: disegnoFiltro,
+    cosa: 'Sceglie i finali: le regole migliori fra semi e varianti, diverse fra loro.',
+    filtro: ['Filtri a caso battuti al 99% per il terzo pattern', 'Una variante di uscita o di orario deve fare meglio della regola da cui viene', 'Correlazione fra finali sotto 0,7'],
+    perche: 'Pochi sistemi diversi valgono più di molte varianti dello stesso.' },
+  { id: 'L1', titolo: 'Ricalcolo esatto', sotto: 'una posizione alla volta, gemello, segnale', disegno: disegnoL1,
+    cosa: 'I finali si ricalcolano con il motore che segue ProRealTime (una posizione alla volta) e si controlla da dove viene il guadagno.',
+    filtro: ['Stessa regola sull\'Euro Stoxx: deve guadagnare anche lì', 'Positiva in entrambe le metà del periodo', 'Segnale isolato: almeno metà del guadagno non viene dall\'ora né dalla salita del DAX'],
     perche: 'Un long sul DAX guadagna anche solo perché il DAX nel lungo periodo sale.' },
-  { id: 'L2', titolo: 'Ingressi', sotto: 'una o due condizioni', disegno: disegnoL2,
-    cosa: 'Aggiunge alla radice una condizione per volta, scelta da un elenco di ipotesi scritte prima con il loro motivo.',
-    filtro: ['Batte il 95% dei filtri a caso che tolgono gli stessi trade (99% per la seconda condizione)', 'Migliora la radice in almeno 2 terzi del periodo su 3', 'Le soglie vicine vanno nella stessa direzione', 'I trade tolti vanno peggio di quelli tenuti'],
-    perche: 'Scegliere i giorni migliori fra tanti è facile anche a caso: il confronto con il caso dice se il filtro sa qualcosa.' },
-  { id: 'L3', titolo: 'Uscite', sotto: 'quando chiudere', disegno: disegnoL3,
-    cosa: 'Prova poche uscite diverse e uno stop messo appena sotto il punto più basso toccato dai trade vincenti.',
-    filtro: ['Utile / drawdown migliore di prima', 'Scelta misurata sugli anni lasciati fuori'],
-    perche: 'Lo stop non si cerca provando tutti i valori, si legge dai trade.' },
-  { id: 'L4', titolo: 'Verifica', sotto: 'nessuna ricerca, solo prove', disegno: disegnoL4,
-    cosa: 'I sistemi finali passano controlli che non scelgono niente, li confermano o li scartano.',
-    filtro: ['Ricalcolo con i dati al minuto (stop e target dentro la barra)', 'Costi IG doppi: deve restare positivo', 'Euro Stoxx', 'DSR: probabilità che il risultato regga dopo tutte le prove fatte', 'Ricerca rifatta anno per anno con i soli anni precedenti: deve guadagnare almeno metà', 'Filtri di Andrea: soglia in euro, curva regolare (R² 0,85), 70% di anni positivi'],
-    perche: 'Ogni prova in più aumenta la probabilità di trovare un caso fortunato: qui si paga il conto.' },
+  { id: 'L3', titolo: 'Uscite', sotto: 'stop dai trade', disegno: disegnoL3,
+    cosa: 'Prova uno stop messo appena sotto il punto più basso toccato dai trade vincenti e due stop tondi.',
+    filtro: ['Utile / drawdown migliore di prima'], perche: 'Lo stop si legge dai trade, non si cerca provando tutti i valori.' },
+  { id: 'L4', titolo: 'Verifica', sotto: 'si paga il conto delle prove', disegno: disegnoL4,
+    cosa: 'Controlli che non scelgono niente: confermano o scartano.',
+    filtro: ['Ricalcolo minuto per minuto e costi IG doppi', 'DSR: probabilità che il risultato regga dopo tutte le prove fatte (contate come gruppi indipendenti)', 'La ricerca intera rifatta anno per anno con i soli anni precedenti deve guadagnare almeno metà', 'Filtri di Andrea: soglia in euro, curva regolare, 70% di anni positivi'],
+    perche: 'Con decine di migliaia di prove qualcosa di bello esce sempre per caso: qui si vede se è caso.' },
   { id: 'finale', titolo: 'Prova finale', sotto: 'anni mai guardati', disegno: disegnoFinale,
     cosa: 'Una volta sola, sui sistemi che hanno passato tutto, si guardano gli anni tenuti da parte.',
-    filtro: ['2024-2025: utile positivo e almeno metà del guadagno a trade dell\'in-sample', '2011-2013: non deve perdere né andare in modo disastroso', 'Prima del 2011: scarta solo se disastroso', 'Chi passa compare nella ricerca come "da provare su ProRealTime"'],
+    filtro: ['2024-2025: utile positivo e almeno metà del guadagno a trade dell\'in-sample', '2011-2013: non deve perdere né andare in modo disastroso', 'Prima del 2011: scarta solo se disastroso'],
     perche: 'Il futuro recente conta più del passato lontano: il mercato cambia.' },
 ];
+function libreriaPattern(lista) {
+  const per = {}; lista.forEach(p => { (per[p.categoria] = per[p.categoria] || []).push(p); });
+  const STRATO = { 1: 'forza bruta e moltiplicazione 1', 2: 'moltiplicazione 1', 3: 'moltiplicazione 2' };
+  return h('div', { class: 'cf-libreria' }, Object.entries(per).map(([cat, ps]) => h('div', {}, h('h4', {}, `${cat} `, h('span', { class: 'muto' }, `· ${ps.length} · ${STRATO[ps[0].strato]}`)),
+    h('ul', {}, ps.map(p => h('li', { title: `${p.condizione[0]} ${p.condizione[1]} ${p.condizione[2]}` }, p.nome))))));
+}
 async function paginaComeFunziona() {
   const mio = giro;
-  let imb = null, nomeRic = null;
+  let imb = null, nomeRic = null, libreria = null;
   try {
     const l = (await api('/ricerche')).filter(r => r.formato === 'ricerca' && r.stato === 'finita' && r.ampiezza);
-    if (l.length) { nomeRic = l[0].nome; imb = (await api('/ricerche/' + nomeRic)).imbuto; }
+    for (const r of l) { const d = await api('/ricerche/' + r.nome); if (d.cicli) { nomeRic = r.nome; imb = d.imbuto; libreria = d.pattern; break; } }
   } catch (e) { /* senza ricerche la pagina si mostra lo stesso */ }
   const conta = {}; (imb || []).forEach(x => { conta[x.strato] = x; });
-  let sel = memo('strato') || 'ampiezza';
+  let sel = memo('strato') || 'forza';
   const pannello = h('div', { class: 'cf-pannello' });
   const chips = h('div', { class: 'cf-percorso' });
   const mostra = id => {
@@ -814,9 +860,9 @@ async function paginaComeFunziona() {
   STRATI.forEach((s, k) => {
     if (k) chips.append(h('span', { class: 'freccia' }, '→'));
     const c = conta[s.id];
-    chips.append(h('button', { type: 'button', 'data-id': s.id, onclick: () => mostra(s.id) }, h('strong', {}, s.titolo), h('span', {}, s.sotto), c ? h('em', {}, String(c.n)) : null));
+    chips.append(h('button', { type: 'button', 'data-id': s.id, class: /^(forza|molt)/.test(s.id) ? 'molt' : '', onclick: () => mostra(s.id) }, h('strong', {}, s.titolo), h('span', {}, s.sotto), c ? h('em', {}, nf(c.n, 0)) : null));
   });
-  mostra(STRATI.some(x => x.id === sel) ? sel : 'ampiezza');
+  mostra(STRATI.some(x => x.id === sel) ? sel : 'forza');
   const periodi = h('div', { class: 'cf-periodi' }, [['2008-2010', 'f-ind', 'fuori campione lontano', 'scarta solo se disastroso', 3],
     ['2011-2013', 'f-vic', 'fuori campione vicino', 'scarta se perde o è disastroso', 3], ['2014-2023', 'f-in', 'in-sample: tutta la ricerca', 'diviso in 10 anni: si sceglie su 8, si misura sui 2 lasciati fuori, in tutti i 45 modi', 10],
     ['2024 – mag 2025', 'f-out', 'prova finale', 'decide, una volta sola', 1.5], ['da nov 2025', 'muto', 'ProRealTime', 'il tuo fuori campione', 2.5]].map(([a, c, t, d, w]) =>
@@ -825,8 +871,10 @@ async function paginaComeFunziona() {
   let giroC = 0;
   const anima = setInterval(() => { if (!document.body.contains(cpcv)) return clearInterval(anima); giroC++; const a = giroC % 10, b = (giroC * 3 + 4) % 10 === a ? (a + 5) % 10 : (giroC * 3 + 4) % 10; [...cpcv.children].forEach((x, i) => x.classList.toggle('test', i === a || i === b)); }, 1400);
   vedi(mio, h('h1', {}, 'Come funziona'),
-    h('p', { class: 'muto' }, 'Una ricerca parte da centinaia di regole semplici e le fa passare per otto strati. A ogni strato si perde qualcuno; alla fine si vede solo chi è arrivato in fondo. Clic su uno strato.'),
+    h('p', { class: 'muto' }, 'Una ricerca alterna moltiplicazioni (arancio: si provano tutte le combinazioni) e filtri (blu: restano solo le migliori e diverse fra loro), poi ricalcola i finali in modo esatto e li verifica. Clic su uno strato.'),
     chips, pannello,
+    libreria ? h('div', {}, h('h2', {}, `I pattern: ${libreria.length}, dalle tue librerie riordinate`),
+      h('p', { class: 'muto' }, 'Ogni pattern è una domanda sul mercato con una soglia tonda in escursioni medie giornaliere (non in % del prezzo). Passa il mouse su un nome per vedere la condizione.'), libreriaPattern(libreria)) : null,
     h('h2', {}, 'Quali anni servono a cosa'), periodi,
     h('div', { class: 'cf-riga' }, h('div', {}, h('h3', {}, 'Anni lasciati fuori, a turno'), h('p', { class: 'muto' }, 'Dentro il 2014-2023 ogni scelta si fa su 8 anni e si misura sui 2 lasciati fuori (in arancio), cambiando coppia 45 volte. Conta il risultato sugli anni lasciati fuori.'), cpcv),
       h('div', {}, h('h3', {}, 'Euro di oggi'), h('p', { class: 'muto' }, 'Il DAX del 2017 si muoveva di 115 punti al giorno, quello del 2023 di 190. I guadagni si misurano in "giornate medie" e si riportano in euro con la volatilità del 2023, così un trade del 2017 pesa come uno di oggi.'))),

@@ -49,7 +49,12 @@ def base(nome: str, minuti: int, anni=None) -> pl.DataFrame:
         pl.col("o").alias("dopen"),
         (pl.col("h") - pl.col("l")).rolling_mean(20).shift(1).alias("esc"),
         (pl.col("h") - pl.col("l")).rolling_mean(100).shift(1).alias("esc_lunga"),
-        *[pl.col(x).shift(k).alias(f"{x}{k}") for x in "ohlc" for k in range(1, 6)],
+        *[pl.col(x).shift(k).alias(f"{x}{k}") for x in "ohlc" for k in range(1, 8)],
+        # massimo e minimo degli ultimi 20 giorni e medie delle chiusure, fino a ieri compreso
+        pl.col("h").rolling_max(20).shift(1).alias("h20g"),
+        pl.col("l").rolling_min(20).shift(1).alias("l20g"),
+        pl.col("c").rolling_mean(50).shift(1).alias("m50g"),
+        pl.col("c").rolling_mean(200).shift(1).alias("m200g"),
     ).drop("apre", "chiude", "o", "h", "l", "c", "v", "minuti")
     b = _anni(dati.barre(nome, minuti), SCOPERTA if anni is None else anni).sort("apre").with_columns(
         pl.col("apre").dt.date().alias("data"))

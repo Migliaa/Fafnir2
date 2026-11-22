@@ -1,0 +1,30 @@
+{
+ "tipo": "cicli",
+ "nome": "dax-long-5m-cicli",
+ "ipotesi": "Forza bruta sul DAX long a 5 minuti: ogni ora d'ingresso, ogni uscita, ogni pattern della libreria di Andrea riordinata; poi i migliori si combinano con indicatori, candele, regime e calendario.",
+ "meccanismo": "Si cercano gli orari in cui il DAX ha una tendenza ricorrente e le condizioni di mercato che la rafforzano; il meccanismo di ogni sistema finale si scrive dopo, guardando quali pattern lo compongono.",
+ "fonte": "librerie di pattern di Andrea (Unger Daily 139, MIG Estesi e Speculari, Andy, DAN) riscritte in motore/pattern.py",
+ "prodotto": "FDAX",
+ "gemello": "FESX",
+ "barre": 5,
+ "lato": 1,
+ "prove_pregresse": 0,
+ "forza_bruta": {
+  "orari": {"da": "08:05", "a": "21:50", "passo": 5},
+  "uscite": [
+   {"nome": "esce dopo 30 minuti", "barre": 4},
+   {"nome": "esce dopo 1 ora", "barre": 10},
+   {"nome": "esce dopo 2 ore", "barre": 22},
+   {"nome": "esce dopo 4 ore", "barre": 46},
+   {"nome": "esce alle 17:30", "ora": "17:30"},
+   {"nome": "esce alle 21:55", "ora": "21:55"},
+   {"nome": "esce il giorno dopo all'apertura", "giorni": 1},
+   {"nome": "esce dopo 2 giorni", "giorni": 2}
+  ]
+ },
+ "cicli": {"semi_1": 300, "semi_2": 100, "finali": 12, "correlazione_semi": 0.9, "correlazione_max": 0.7, "margine_semi": 1.0, "spostamenti_minuti": [-30, -15, 15, 30]},
+ "uscite_finali": [
+  {"nome": "stop 0,5 escursioni", "stop": 0.5},
+  {"nome": "stop 1 escursione", "stop": 1.0}
+ ]
+}

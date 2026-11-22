@@ -127,9 +127,36 @@ Griglia di 540 regole: 15 ore d'ingresso (09:00-20:00) × 9 condizioni (nessuna,
 
 La regola semplice migliore guadagna 3,8 € a trade (volatilità del 2023), la più alta fra quelle con almeno 6 trade l'anno è 11 € a trade (24 l'anno, entrata alle 10:00 dopo un rialzo di mezza escursione, uscita alle 21:55) con t 1,5. Il DAX long intraday a 5 minuti, con regole semplici e uscita entro il giorno dopo, non contiene niente che si avvicini a 20 € a trade con 1 CFD. Il prossimo passo naturale, da decidere con Andrea, è allargare le uscite a più giorni (le soglie di 30 e 50 € esistono per quello) oppure passare a un altro prodotto.
 
+## Ricerca a cicli (2026-11-22, seconda richiesta di Andrea)
+
+Andrea: l'ampiezza era troppo stretta (540 regole) e i filtri non devono solo restringere. Il design corretto alterna **moltiplicazioni** (si provano tutte le combinazioni) e **filtri** (restano le migliori, diverse fra loro), come faceva lui con le librerie di pattern su ProRealTime, ma con le prove contate. File `"tipo": "cicli"`, codice in `motore/ricerca.py`, motore a matrice in `motore/motori/matrice.py`, libreria in `motore/pattern.py`.
+
+| Passo | Cosa si prova | Porte |
+|---|---|---|
+| forza bruta | ogni ora d'ingresso ogni 5 minuti × 8 uscite × nessun pattern o uno dei 49 di struttura del prezzo | nessuna |
+| filtro 1 | | guadagno sopra soglia o margine ≥ 1; t ≥ 2; ≥ 6 trade l'anno; CPCV positiva; entrambe le metà positive; semi diversi (correlazione ≤ 0,9) |
+| moltiplicazione 1 | ogni seme × ogni altro pattern di struttura, indicatore o candela (famiglia diversa) | nessuna |
+| filtro 2 | | come il filtro 1 con margine ≥ 1,5; batte il 95% dei filtri a caso (formula esatta della media di un sottoinsieme casuale); migliora il seme in 2 terzi su 3; i trade tolti vanno peggio |
+| moltiplicazione 2 | ogni seme × regime e calendario; stesse condizioni con le altre 7 uscite e con l'ingresso spostato di 15 e 30 minuti | nessuna |
+| filtro 3 | | come il filtro 2 al 99%; le varianti devono avere un punteggio più alto; 12 finali con correlazione ≤ 0,7 |
+| ricalcolo esatto | motore degli eventi (una posizione alla volta), gemello, metà, segnale isolato | L1 |
+| uscite, verifica, prova finale | come prima | L3, L4, prova finale |
+
+Il motore a matrice calcola una volta per ogni coppia (ora, uscita) il risultato di ogni giorno; una regola è la somma sui giorni in cui le sue condizioni sono vere (verificato uguale al motore degli eventi nei test). Le prove effettive per il DSR sono la quota di gruppi indipendenti su un campione di 4.000 regole della forza bruta (correlazione dei risultati giornalieri) applicata a tutte le prove. Il walk-forward rifà forza bruta, filtri e moltiplicazioni anno per anno dal 2017 con i soli anni precedenti e conta cosa fanno l'anno dopo tutti i finali scelti, insieme.
+
+### DAX 5 minuti long a cicli (`esperimenti/dax-long-5m-cicli.json`)
+
+76.409 prove in 2 minuti e mezzo: 66.400 → 112 semi (445 passano) → 7.672 → 100 semi (115 passano) → 2.289 → 12 finali → 12 reggono il ricalcolo esatto, il gemello sul segno, le metà e il segnale isolato → 0 passano la verifica.
+
+I 12 finali, in-sample, sono quello che Andrea cerca: 28-47 € a trade con la volatilità del 2023, 6-12 trade l'anno, t 2,4-4,1, R² 0,88-0,97, costi doppi positivi. Si fermano tutti su due porte:
+- **ricerca rifatta anno per anno**: scegliendo ogni anno con i soli anni precedenti, i finali dell'anno dopo perdono, −0,04 escursioni a trade su 726 trade, 5 anni negativi su 7 (2017-2023);
+- **DSR**: con circa 13.700 prove effettive (18% di 76.409) il DSR dei finali è fra 0,001 e 0,03, contro 0,95 richiesto.
+
+Due finali perdono anche sull'Euro Stoxx. Il quadro è quello noto della ricerca a forza bruta (Bailey et al. 2014; Harvey, Liu 2015): con decine di migliaia di prove escono sempre regole con curve belle, e la prova che conta è se la procedura che le sceglie funziona sugli anni che non ha visto. Sul DAX long a 5 minuti, con questa libreria, non funziona.
+
 ## Nel software
 
-- `motore/albero.py`: `python -m motore.albero controlla|lancia <file>`; risultati in `risultati/ricerche/<nome>/ricerca.json`, avanzamento in `stato.json`, diario dei passi nel risultato; una ricerca già lanciata non si rilancia (la prova finale si usa una volta). Test in `motore/test_albero.py`.
+- `motore/ricerca.py`: `python -m motore.ricerca controlla|lancia <file>` per le ricerche a cicli; `motore/albero.py`: `python -m motore.albero controlla|lancia <file>` per le radici date a mano; risultati in `risultati/ricerche/<nome>/ricerca.json`, avanzamento in `stato.json`, diario dei passi nel risultato; una ricerca già lanciata non si rilancia (la prova finale si usa una volta). Test in `motore/test_albero.py`.
 - Condizioni nuove in `motore/condizioni.py`, tradotte in ProRealCode da `motore/uscita.py`: `vol_relativa`, `dal_1530`, `terzo_venerdi`, `giorno_mese`.
 - Prova finale a tre periodi e regola del disastroso: `motore/prova_finale.py`, `motore/giudizio.py`.
 - Cruscotto (Fafnir2): pagina **Ricerche** con lo storico (anche quelle in corso e quelle del formato precedente), imbuto per strato, i motivi di scarto più frequenti, solo i sistemi da provare su ProRealTime con il codice; pagina **Come funziona** con un disegno per strato; le pagine Sistemi ed Esperimenti sono tolte. Nella pagina della ricerca, i rami (mini-curva, euro di oggi, G, trade l'anno, t, R², drawdown, segnale isolato, prima porta non superata; clic per tutte le porte) e le foglie verificate (curva quadrata con il riferimento D2 tratteggiato, anni del walk-forward, sette numeri).

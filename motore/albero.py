@@ -366,6 +366,9 @@ class Albero:
         self.diario: list[dict] = []         # passi della ricerca, per il cruscotto
         self.osserva = None                  # funzione (prove fatte, budget) chiamata a ogni nodo
         self.wf_ricerca: dict | None = None
+        self.wf_esterno: dict | None = None     # walk-forward calcolato fuori (ricerca a cicli)
+        self.prove_esterne: float | None = None  # prove effettive fatte prima dell'albero (forza bruta), per il DSR
+        self.var_sr_esterna: float | None = None
 
     # -- nodi
     def nodo(self, regola: dict, livello: str, genitore: str | None, etichetta: str, n_cond: int, conta: bool = True,
@@ -522,7 +525,7 @@ class Albero:
                     reg[k] = val
             if reg == padre["regola"]:
                 continue
-            nd = self.nodo(reg, "L3", padre["id"], nome, padre["n_cond"])
+            nd = self.nodo(reg, "L3", padre["id"], f"{padre['etichetta']}, {nome}", padre["n_cond"])
             if nd is None:
                 break
             nuovi.append(nd)
@@ -674,7 +677,7 @@ class Albero:
         if self.esaurito:
             self.nota("budget", f"budget di {self.budget} prove esaurito: la ricerca si ferma qui")
         foglie = []
-        self.wf_ricerca = self.walkforward_ricerca() if spec.get("ampiezza") else None
+        self.wf_ricerca = self.wf_esterno or (self.walkforward_ricerca() if spec.get("ampiezza") else None)
         for rad, finali in foglie_per_radice:
             wf = self.wf_ricerca or self.walkforward(rad)
             for f in finali:
@@ -724,8 +727,8 @@ class Albero:
         g = ctx.giornaliera(tm)
         mc = metriche.montecarlo(g, n=2000)
         srs = [n["misure"].get("sharpe") for n in self.nodi if n["misure"].get("sharpe") is not None]
-        n_prove = self.prove + int(self.spec.get("prove_pregresse", 0))
-        var_sr = float(np.var(srs, ddof=1)) if len(srs) > 1 else 0.0
+        n_prove = self.prove + int(self.spec.get("prove_pregresse", 0)) + int(self.prove_esterne or 0)
+        var_sr = self.var_sr_esterna if self.var_sr_esterna is not None else (float(np.var(srs, ddof=1)) if len(srs) > 1 else 0.0)
         dsr = float(metriche.dsr(g, n_prove, var_sr)) if g.std() > 0 else None
         eff = (wf["media_esc"] / mm["media_esc"]) if wf.get("media_esc") is not None and mm.get("media_esc") else None
         d = differenziale(ctx, reg, tm, int(reg["lato"]))
@@ -739,7 +742,7 @@ class Albero:
             _porta("Costi doppi: guadagno medio", doppi.get("media_esc"), "> 0", None if doppi.get("media_esc") is None else doppi["media_esc"] > 0),
             *([_porta(f"Gemello {gem.get('prodotto')}", gem.get("media_esc"), "> 0", None if gem.get("media_esc") is None else gem["media_esc"] > 0)] if gem else []),
             *porte_differenziale(d),
-            _porta("DSR sulle prove dell'albero", dsr, f">= {DSR_MIN} ({n_prove} prove)", None if dsr is None else dsr >= DSR_MIN),
+            _porta("DSR sulle prove fatte", dsr, f">= {DSR_MIN} ({n_prove} prove)", None if dsr is None else dsr >= DSR_MIN),
             _porta("Walk-forward della procedura (efficienza)", eff, f">= {WF_EFFICIENZA_MIN:g}", None if eff is None else eff >= WF_EFFICIENZA_MIN),
             _porta("Drawdown a blocchi / rimescolato", mc.get("rapporto_dd"), "informativo", None, info=True),
         ]
@@ -922,6 +925,11 @@ def lancia(file, log=print) -> dict:
     except Exception as ex:
         _scrivi_stato(cart, {"stato": "fallita", "inizio": inizio, "errore": f"{type(ex).__name__}: {ex}", "diario": al.diario})
         raise
+    return concludi(al, ris, spec, cart, inizio)
+
+
+def concludi(al: "Albero", ris: dict, spec: dict, cart: Path, inizio: str, extra: dict | None = None) -> dict:
+    """Registro, prova finale una volta sola sulle foglie che passano la scoperta, scrittura di `ricerca.json`."""
     ctx = al.ctx
     fam = f"ricerca:{spec['nome']}"
     prove = [({"nodo": n["id"], "regola": n["regola"]}, ctx.giornaliera(al.trade(n["id"]))) for n in al.nodi]
@@ -954,9 +962,13 @@ def lancia(file, log=print) -> dict:
            "prove": al.prove, "budget": al.budget, "budget_esaurito": al.esaurito, "durata_s": ris["durata_s"],
            "anni": list(SCOPERTA), "euro_per_escursione_oggi": _r(ctx.euro_esc, 2), "esc_oggi_punti": _r(ctx.esc_oggi, 1),
            "imbuto": imbuto(al, foglie), "diario": al.diario, "walkforward_ricerca": al.wf_ricerca,
-           "nodi": al.nodi, "livelli": al.livelli, "foglie": foglie}
+           "nodi": al.nodi, "livelli": al.livelli, "foglie": foglie, **(extra or {})}
+    if extra and "imbuto_cicli" in extra:
+        out["imbuto"] = extra["imbuto_cicli"] + [x for x in imbuto(al, foglie) if x["strato"] in ("L1", "L3", "L4", "finale")]
+        out["prove"] = al.prove + extra.get("prove_cicli", 0)
+        out["durata_s"] = round(ris["durata_s"] + extra.get("durata_cicli_s", 0), 1)
     (cart / "ricerca.json").write_text(json.dumps(metriche.pulisci(out), ensure_ascii=False, indent=1), encoding="utf-8")
-    _scrivi_stato(cart, {"stato": "finita", "inizio": inizio, "fine": out["fine"], "prove": al.prove, "budget": al.budget})
+    _scrivi_stato(cart, {"stato": "finita", "inizio": inizio, "fine": out["fine"], "prove": out["prove"], "budget": al.budget})
     return out
 
 

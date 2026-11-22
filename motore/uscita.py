@@ -40,6 +40,39 @@ TRADUZIONI = {
     "dal_1530": ("(close - O1530) / EscMedia", "(O1530 - close) / EscMedia", False),
     "terzo_venerdi": ("dayofweek = 5 AND Day >= 15 AND Day <= 21", "dayofweek = 5 AND Day >= 15 AND Day <= 21", True),
     "giorno_mese": ("Day", "Day", False),
+    "corpo_ieri": ("ABS(DClose(1) - DOpen(1)) / (DHigh(1) - DLow(1))",) * 2 + (False,),
+    "var_ieri": ("(DClose(1) - DClose(2)) / EscMedia", "(DClose(2) - DClose(1)) / EscMedia", False),
+    "ieri_verde": ("(DClose(1) - DOpen(1)) / EscMedia", "(DOpen(1) - DClose(1)) / EscMedia", False),
+    "chiusure_in_rialzo": ("(DClose(1) > DClose(2)) + (DClose(2) > DClose(3)) + (DClose(3) > DClose(4))",
+                           "(DClose(1) < DClose(2)) + (DClose(2) < DClose(3)) + (DClose(3) < DClose(4))", False),
+    "massimo_ieri_su": ("(DHigh(1) - DHigh({0})) / EscMedia", "(DLow({0}) - DLow(1)) / EscMedia", False),
+    "interna_ieri": ("DHigh(1) < DHigh(2) AND DLow(1) > DLow(2)",) * 2 + (True,),
+    "esterna_ieri": ("DHigh(1) > DHigh(2) AND DLow(1) < DLow(2)",) * 2 + (True,),
+    "massimi_crescenti": ("DHigh(1) > DHigh(2) AND DLow(1) > DLow(2)", "DHigh(1) < DHigh(2) AND DLow(1) < DLow(2)", True),
+    "nr4": ("(DHigh(1) - DLow(1)) <= MinEsc4",) * 2 + (True,),
+    "nr7": ("(DHigh(1) - DLow(1)) <= MinEsc7",) * 2 + (True,),
+    "escursione_ieri": ("(DHigh(1) - DLow(1)) / EscMedia",) * 2 + (False,),
+    "dal_massimo_20g": ("(close - Max20g) / EscMedia", "(Min20g - close) / EscMedia", False),
+    "media_50g": ("(close - Media50g) / EscMedia", "(Media50g - close) / EscMedia", False),
+    "media_200g": ("(close - Media200g) / EscMedia", "(Media200g - close) / EscMedia", False),
+    "apertura_in_ieri": ("(DOpen(0) - DLow(1)) / (DHigh(1) - DLow(1))", "(DHigh(1) - DOpen(0)) / (DHigh(1) - DLow(1))", False),
+    "dall_apertura": ("(close - DOpen(0)) / EscMedia", "(DOpen(0) - close) / EscMedia", False),
+    "pos_oggi": ("(close - DLow(0)) / (DHigh(0) - DLow(0))", "(DHigh(0) - close) / (DHigh(0) - DLow(0))", False),
+    "massimo_oggi_su_ieri": ("(DHigh(0) - DHigh(1)) / EscMedia", "(DLow(1) - DLow(0)) / EscMedia", False),
+    "dal_minimo_seduta": ("(close - DLow(0)) / EscMedia", "(DHigh(0) - close) / EscMedia", False),
+    "bollinger": ("(close - BollingerDown[{0}](close)) / (BollingerUp[{0}](close) - BollingerDown[{0}](close))",
+                  "(BollingerUp[{0}](close) - close) / (BollingerUp[{0}](close) - BollingerDown[{0}](close))", False),
+    "donchian": ("(close - highest[{0}](high)[1]) / AverageTrueRange[{0}](close)",
+                 "(lowest[{0}](low)[1] - close) / AverageTrueRange[{0}](close)", False),
+    "macd": ("(ExponentialAverage[12](close) - ExponentialAverage[26](close)) / EscMedia",
+             "(ExponentialAverage[26](close) - ExponentialAverage[12](close)) / EscMedia", False),
+    "adx": ("ADX[{0}]",) * 2 + (False,),
+    "atr_rapporto": ("AverageTrueRange[{0}](close) / AverageTrueRange[{1}](close)",) * 2 + (False,),
+    "candela": ("(close - open) / EscMedia", "(open - close) / EscMedia", False),
+    "avvolgente": ("close > open AND close[1] < open[1] AND close >= open[1] AND open <= close[1]",
+                   "close < open AND close[1] > open[1] AND close <= open[1] AND open >= close[1]", True),
+    "barra_ampia": ("(high - low) / AverageTrueRange[20](close)",) * 2 + (False,),
+    "giorno_settimana": ("dayofweek",) * 2 + (False,),
 }
 # righe di calcolo che alcune famiglie richiedono prima del segnale
 PREPARAZIONE = {
@@ -49,6 +82,15 @@ PREPARAZIONE = {
                  "IF Date <> DataPrec1530 THEN", "   O1530 = 0", "ENDIF", "DataPrec1530 = Date",
                  "IF OpenTime = 153000 THEN", "   O1530 = open", "ENDIF"],
 }
+for _k in (4, 7):
+    PREPARAZIONE[f"nr{_k}"] = [f"// escursione più piccola dei {_k - 1} giorni prima di ieri", f"MinEsc{_k} = DHigh(2) - DLow(2)",
+                               f"FOR i = 3 TO {_k}", f"   MinEsc{_k} = min(MinEsc{_k}, DHigh(i) - DLow(i))", "NEXT"]
+PREPARAZIONE["dal_massimo_20g"] = ["// massimo e minimo degli ultimi 20 giorni, fino a ieri", "Max20g = DHigh(1)", "Min20g = DLow(1)",
+                                   "FOR i = 2 TO 20", "   Max20g = max(Max20g, DHigh(i))", "   Min20g = min(Min20g, DLow(i))", "NEXT"]
+for _g in (50, 200):
+    PREPARAZIONE[f"media_{_g}g"] = [f"// media delle ultime {_g} chiusure giornaliere, fino a ieri", f"Somma{_g}g = 0", f"FOR i = 1 TO {_g}",
+                                    f"   Somma{_g}g = Somma{_g}g + DClose(i)", "NEXT", f"Media{_g}g = Somma{_g}g / {_g}"]
+
 # condizione aggiunta al segnale quando la grandezza non esiste ancora (in Python vale null e la condizione è falsa)
 VALIDA = {"dal_1530": "O1530 > 0", "vol_relativa": "EscLunga > 0"}
 

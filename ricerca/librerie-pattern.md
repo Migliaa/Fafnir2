@@ -1,5 +1,7 @@
 # Librerie di pattern e indicatori
 
+**Stato al 2026-11-22**: la libreria riordinata secondo le regole qui sotto è in `motore/pattern.py` (83 pattern in 9 categorie, ognuno una grandezza di `motore/condizioni.py` con una soglia tonda in escursioni, tradotta in ProRealCode da `motore/uscita.py`). Gli strati d'uso: struttura del prezzo nella forza bruta, indicatori e candele nella prima moltiplicazione, regime e calendario nella seconda (`ricerca/protocollo-albero.md`, "Ricerca a cicli").
+
 Revisione del 2026-11-21 dei cinque file in `G:\My Drive\Andrea\ProRealTime\Pattern`: `001_MIG_Pattern_Estesi` (215 pattern nel selettore), `001_MIG_Indicatori_Estesi` (122), `001_MIG_Pattern_Speculari45` (45 coppie long/short), `004_DAN_PtnUNMR_DD155` e `_MF155` (155 ciascuno, uno con le funzioni giornaliere, l'altro con le barre del grafico).
 
 ## Errori

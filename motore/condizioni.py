@@ -41,6 +41,34 @@ def rsi(n: int) -> pl.Expr:
     return 100 - 100 / (1 + su / giu)
 
 
+def adx(n: int) -> pl.Expr:
+    """ADX di Wilder come ADX[n] di ProRealTime."""
+    su, giu = h - h.shift(1), l.shift(1) - l
+    pdm = pl.when((su > giu) & (su > 0)).then(su).otherwise(0.0)
+    mdm = pl.when((giu > su) & (giu > 0)).then(giu).otherwise(0.0)
+    a_ = atr(n)
+    pdi = 100 * pdm.ewm_mean(alpha=1 / n, adjust=False, min_samples=n) / a_
+    mdi = 100 * mdm.ewm_mean(alpha=1 / n, adjust=False, min_samples=n) / a_
+    dx = 100 * (pdi - mdi).abs() / (pdi + mdi)
+    return dx.ewm_mean(alpha=1 / n, adjust=False, min_samples=n)
+
+
+def bollinger_b(n: int) -> pl.Expr:
+    """%B di Bollinger a 2 deviazioni standard: 0 sulla banda bassa, 1 su quella alta."""
+    m, sd = c.rolling_mean(n), c.rolling_std(n, ddof=0)
+    return (c - (m - 2 * sd)) / (4 * sd)
+
+
+def _d(x: str, k: int) -> pl.Expr:
+    return pl.col(f"{x}{k}")
+
+
+def _nr(k: int) -> pl.Expr:
+    """Escursione di ieri la più piccola degli ultimi k giorni: 1 o 0."""
+    r1 = _d("h", 1) - _d("l", 1)
+    return (r1 <= pl.min_horizontal(*[_d("h", j) - _d("l", j) for j in range(2, k + 1)])).cast(pl.Float64)
+
+
 def _incrocio(a: pl.Expr, b: pl.Expr) -> pl.Expr:
     return ((a > b) & (a.shift(1) <= b.shift(1))).cast(pl.Float64)
 
@@ -88,6 +116,44 @@ FAMIGLIE = {
     "terzo_venerdi": (lambda: ((pl.col("data").dt.weekday() == 5) & pl.col("giorno_mese").is_between(15, 21)).cast(pl.Float64),) * 2,
     # giorno del mese di calendario (fine mese: >= 25)
     "giorno_mese": (lambda: pl.col("giorno_mese").cast(pl.Float64),) * 2,
+    # --- libreria riordinata (2026-11-22, `motore/pattern.py`): dalle librerie di Andrea, soglie in escursioni
+    # ieri e i giorni prima (funzioni giornaliere, il significato non cambia con il timeframe)
+    "corpo_ieri": (lambda: (_d("c", 1) - _d("o", 1)).abs() / (_d("h", 1) - _d("l", 1)),) * 2,
+    "var_ieri": (lambda: (_d("c", 1) - _d("c", 2)) / ESC, lambda: (_d("c", 2) - _d("c", 1)) / ESC),
+    "ieri_verde": (lambda: (_d("c", 1) - _d("o", 1)) / ESC, lambda: (_d("o", 1) - _d("c", 1)) / ESC),
+    "chiusure_in_rialzo": (lambda: sum((_d("c", k) > _d("c", k + 1)).cast(pl.Float64) for k in (1, 2, 3)),
+                           lambda: sum((_d("c", k) < _d("c", k + 1)).cast(pl.Float64) for k in (1, 2, 3))),
+    "massimo_ieri_su": (lambda k=5: (_d("h", 1) - _d("h", k)) / ESC, lambda k=5: (_d("l", k) - _d("l", 1)) / ESC),
+    "interna_ieri": (lambda: ((_d("h", 1) < _d("h", 2)) & (_d("l", 1) > _d("l", 2))).cast(pl.Float64),) * 2,
+    "esterna_ieri": (lambda: ((_d("h", 1) > _d("h", 2)) & (_d("l", 1) < _d("l", 2))).cast(pl.Float64),) * 2,
+    "massimi_crescenti": (lambda: ((_d("h", 1) > _d("h", 2)) & (_d("l", 1) > _d("l", 2))).cast(pl.Float64),
+                          lambda: ((_d("h", 1) < _d("h", 2)) & (_d("l", 1) < _d("l", 2))).cast(pl.Float64)),
+    "nr4": (lambda: _nr(4),) * 2,
+    "nr7": (lambda: _nr(7),) * 2,
+    "escursione_ieri": (lambda: (_d("h", 1) - _d("l", 1)) / ESC,) * 2,
+    "dal_massimo_20g": (lambda: (c - pl.col("h20g")) / ESC, lambda: (pl.col("l20g") - c) / ESC),
+    "media_50g": (lambda: (c - pl.col("m50g")) / ESC, lambda: (pl.col("m50g") - c) / ESC),
+    "media_200g": (lambda: (c - pl.col("m200g")) / ESC, lambda: (pl.col("m200g") - c) / ESC),
+    # oggi fino a questa barra
+    "apertura_in_ieri": (lambda: (pl.col("dopen") - _d("l", 1)) / (_d("h", 1) - _d("l", 1)),
+                         lambda: (_d("h", 1) - pl.col("dopen")) / (_d("h", 1) - _d("l", 1))),
+    "dall_apertura": (lambda: (c - pl.col("dopen")) / ESC, lambda: (pl.col("dopen") - c) / ESC),
+    "pos_oggi": (lambda: (c - pl.col("dmin")) / (pl.col("dmax") - pl.col("dmin")),
+                 lambda: (pl.col("dmax") - c) / (pl.col("dmax") - pl.col("dmin"))),
+    "massimo_oggi_su_ieri": (lambda: (pl.col("dmax") - _d("h", 1)) / ESC, lambda: (_d("l", 1) - pl.col("dmin")) / ESC),
+    "dal_minimo_seduta": (lambda: (c - pl.col("dmin")) / ESC, lambda: (pl.col("dmax") - c) / ESC),
+    # indicatori e candele sulle barre del grafico
+    "bollinger": (lambda n=20: bollinger_b(n), lambda n=20: 1 - bollinger_b(n)),
+    "donchian": (lambda n=20: (c - h.rolling_max(n).shift(1)) / atr(n), lambda n=20: (l.rolling_min(n).shift(1) - c) / atr(n)),
+    "macd": (lambda: (ema(12) - ema(26)) / ESC, lambda: (ema(26) - ema(12)) / ESC),
+    "adx": (lambda n=14: adx(n),) * 2,
+    "atr_rapporto": (lambda a=2, b=20: atr(a) / atr(b),) * 2,
+    "candela": (lambda: (c - o) / ESC, lambda: (o - c) / ESC),
+    "avvolgente": (lambda: ((c > o) & (c.shift(1) < o.shift(1)) & (c >= o.shift(1)) & (o <= c.shift(1))).cast(pl.Float64),
+                   lambda: ((c < o) & (c.shift(1) > o.shift(1)) & (c <= o.shift(1)) & (o >= c.shift(1))).cast(pl.Float64)),
+    "barra_ampia": (lambda: (h - l) / atr(20),) * 2,
+    # calendario
+    "giorno_settimana": (lambda: pl.col("giorno").cast(pl.Float64),) * 2,
 }
 
 OPERATORI = {">": pl.Expr.gt, ">=": pl.Expr.ge, "<": pl.Expr.lt, "<=": pl.Expr.le, "==": pl.Expr.eq}

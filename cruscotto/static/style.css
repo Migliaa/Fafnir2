@@ -159,3 +159,7 @@ svg.disegno { width: 100%; height: auto; display: block; }
 td.desc { white-space: normal; min-width: 240px; max-width: 460px; }
 .imbuto-riga { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; } .imbuto-riga svg { flex: 2 1 480px; } .imbuto-riga > div { flex: 1 1 220px; }
 ul.perche { padding-left: 18px; margin: 4px 0; } ul.perche li { margin: 4px 0; }
+.cf-percorso button.molt em { color: var(--f-wf); }
+.cf-libreria { columns: 3 260px; column-gap: 24px; }
+.cf-libreria > div { break-inside: avoid; margin-bottom: 10px; }
+.cf-libreria h4 { margin: 6px 0 2px; } .cf-libreria ul { margin: 0; padding-left: 16px; font-size: 13px; }
