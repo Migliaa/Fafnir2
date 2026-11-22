@@ -238,52 +238,6 @@ const COLONNE = [
   { k: 'oos', t: 'Fuori campione €/trade', title: 'Guadagno medio a trade nella prova finale', v: r => (r.fuori_campione || {}).guadagno_medio },
   { k: 'esito', t: 'Esito', v: r => r.esito === 'candidato' ? 0 : 1 },
 ];
-async function paginaSistemi() {
-  const mio = giro;
-  const [righe, esps] = await Promise.all([api('/sistemi'), api('/esperimenti')]);
-  const S = (esps[0] || {}).soglie || {};
-  const valori = k => [...new Set(righe.map(r => r[k]))].sort();
-  const nCand = righe.filter(r => r.esito === 'candidato').length, nScart = righe.length - nCand;
-  const corpo = h('tbody'), conto = h('span', { class: 'muto' });
-  function sel(k, et, opzioni) {
-    return h('select', { onchange: ev => { filtri[k] = ev.target.value; ridisegna(); }, title: et },
-      h('option', { value: '' }, et + ': tutti'), opzioni.map(([v, t]) => h('option', { value: v, selected: String(filtri[k]) === String(v) }, t)));
-  }
-  const q = h('input', { type: 'search', placeholder: 'Cerca per nome', value: filtri.q, oninput: ev => { filtri.q = ev.target.value; ridisegna(); } });
-  const interruttore = h('label', { class: 'interr' }, h('input', { type: 'checkbox', checked: filtri.scartati, onchange: ev => { filtri.scartati = ev.target.checked; ridisegna(); } }), ` Mostra anche gli scartati (${nScart})`);
-  const intest = h('tr');
-  function ridisegna() {
-    const col = COLONNE.find(c => c.k === ordine.k);
-    const sel_ = righe.filter(r => (filtri.scartati || r.esito === 'candidato') && (!filtri.esperimento || r.esperimento === filtri.esperimento) && (!filtri.prodotto || r.prodotto === filtri.prodotto) &&
-      (!filtri.lato || r.lato === filtri.lato) && (!filtri.q || (r.nome + ' ' + r.etichetta).toLowerCase().includes(filtri.q.toLowerCase())));
-    if (col && col.v) sel_.sort((a, b) => { const x = col.v(a), y = col.v(b); return (x == null) - (y == null) || (x > y ? 1 : x < y ? -1 : 0) * ordine.dir; });
-    conto.textContent = `${sel_.length} di ${righe.length}`;
-    intest.replaceChildren(...COLONNE.map(c => h('th', { class: c.v ? 'ord' : '', title: c.title, onclick: c.v ? () => {
-      ordine = { k: c.k, dir: ordine.k === c.k ? -ordine.dir : (c.k === 'nome' || c.k === 'prodotto' ? 1 : -1) }; ridisegna(); } : null },
-      c.t + (ordine.k === c.k ? (ordine.dir > 0 ? ' ▲' : ' ▼') : ''))));
-    corpo.replaceChildren(...sel_.map(r => {
-      const m = r.misure || {}, fc = r.fuori_campione, sg = m.ore_medie == null ? null : soglia(S, m.ore_medie);
-      return h('tr', { class: 'clic', onclick: () => { location.hash = `#/sistemi/${r.esperimento}/${r.id}`; } },
-        h('td', { class: 'mini-td' }, miniGrafico(r.mini)),
-        h('td', {}, r.nome, h('div', { class: 'muto', style: 'font-size:11px' }, r.etichetta), r.esito === 'scartato' && r.motivo ? h('div', { class: 'motivo' }, r.motivo) : null),
-        h('td', {}, r.prodotto), h('td', {}, r.lato),
-        h('td', { class: colore(sg == null || m.guadagno_medio == null ? null : m.guadagno_medio >= sg) }, m.guadagno_medio == null ? '–' : nf(m.guadagno_medio, 1) + ' €'),
-        h('td', {}, m.drawdown == null ? '–' : eur(m.drawdown)), h('td', {}, nf(m.rapporto_costi, 1)), h('td', {}, nf(m.ore_medie, 1)),
-        h('td', { class: colore(m.r2 == null || S.r2 == null ? null : m.r2 >= S.r2) }, nf(m.r2)),
-        h('td', { class: colore(m.trade_anno == null || S.trade_anno == null ? null : m.trade_anno >= S.trade_anno) }, nf(m.trade_anno, 0)),
-        h('td', { class: fc ? colore(fc.guadagno_medio >= 0) : 'muto' }, fc ? (fc.guadagno_medio == null ? 'nessun trade' : nf(fc.guadagno_medio, 1) + ' €') : '–'),
-        h('td', {}, badge(r.esito)));
-    }));
-  }
-  const vuoto = !righe.length ? 'Nessun sistema: lancia un esperimento e poi `esperimento arricchisci <nome>`.' :
-    (!nCand ? `Nessun candidato: tutti i ${righe.length} sistemi sono stati scartati. Attiva l'interruttore per vederli con il motivo.` : null);
-  vedi(mio, h('h1', {}, 'Sistemi'),
-    h('div', { class: 'filtri' }, sel('esperimento', 'Esperimento', valori('esperimento').map(v => [v, v])), sel('prodotto', 'Prodotto', valori('prodotto').map(v => [v, v])),
-      sel('lato', 'Lato', [['long', 'long'], ['short', 'short']]), q, interruttore, conto),
-    vuoto ? h('p', { class: 'muto' }, vuoto) : null,
-    righe.length ? h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, intest), corpo)) : null);
-  ridisegna();
-}
 
 // ------------------------------------------------------------------ scheda
 const sezione = (titolo, costruisci, nota) => {
@@ -304,7 +258,7 @@ async function paginaScheda(esp, id) {
   const d = await api(`/sistemi/${esp}/${id}`);
   const sc = d.scheda, g = sc.giudizio || {}, ih = d.intestazione, m = sc.misure || {}, S = d.soglie || {}, pf = sc.prova_finale;
   const testata = h('div', { class: 'testata' },
-    h('div', { class: 'titolo' }, h('a', { href: '#/sistemi' }, '← Sistemi'), h('h1', { style: 'margin:0' }, d.nome),
+    h('div', { class: 'titolo' }, h('a', { href: '#/ricerche' }, '← Ricerche'), h('h1', { style: 'margin:0' }, d.nome),
       badge(g.esito, g.esito ? ESITI[g.esito] : 'Non giudicato'), h('span', { class: 'muto' }, `${sc.prodotto} · ${d.lato} · barre da ${ih.barre} min`)),
     h('p', { class: 'muto', style: 'margin:6px 0 0' }, d.riga.parametri ? Object.entries(d.riga.parametri).map(([k, v]) => `${k} = ${v}`).join(' · ') : ''));
   // curva: tutto il tempo se ci sono i dati in euro, altrimenti la sola scoperta in escursioni
@@ -512,20 +466,11 @@ function decisione(d) {
 }
 
 // ------------------------------------------------------------------ esperimenti
-async function paginaEsperimenti() {
-  const mio = giro;
-  const l = await api('/esperimenti');
-  vedi(mio, h('h1', {}, 'Esperimenti'), l.length ? h('div', { class: 'tabella-cont' }, h('table', {},
-    h('thead', {}, h('tr', {}, [['Nome'], ['Lato'], ['Prodotti'], ['Barre'], ['Prove', 'Prove di questo esperimento / budget di prove ammesse per la sua scoperta'], ['Dopo i filtri', 'Prove che hanno passato i filtri di Andrea'], ['Candidati'], ['Scartati']].map(([t, ti]) => h('th', { title: ti }, t)))),
-    h('tbody', {}, l.map(e => h('tr', { class: 'clic', onclick: () => { location.hash = '#/esperimenti/' + e.nome; } }, h('td', {}, e.nome), h('td', {}, e.intestazione.direzione), h('td', {}, e.intestazione.prodotti.join(', ')),
-      h('td', {}, e.intestazione.barre), h('td', {}, `${e.prove.questa} / ${nf(e.prove.budget, 0)}`), h('td', {}, e.prove.dopo_filtri == null ? '–' : e.prove.dopo_filtri),
-      h('td', {}, e.esiti.candidato), h('td', {}, e.esiti.scartato)))))) : h('p', { class: 'muto' }, 'Nessun esperimento lanciato.'));
-}
 async function paginaEsperimento(nome) {
   const mio = giro;
   const e = await api('/esperimenti/' + nome), ih = e.intestazione, pr = e.prove, sg = e.soglie;
   const imbuto = pr.dopo_filtri == null ? null : [['Prove', pr.questa], ['Dopo i filtri di Andrea', pr.dopo_filtri], ['Dopo DSR e PBO', pr.dopo_cancello], ['Candidati dopo la prova finale', e.esiti.candidato]];
-  vedi(mio, h('p', {}, h('a', { href: '#/esperimenti' }, '← Esperimenti')), h('h1', {}, nome),
+  vedi(mio, h('p', {}, h('a', { href: '#/ricerche' }, '← Ricerche')), h('h1', {}, nome),
     h('div', { class: 'pannello' }, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
       h('p', {}, h('strong', {}, 'Fonte: '), ih.fonte), h('p', {}, h('strong', {}, 'Direzione attesa: '), ih.direzione, ` · modo ${ih.modo} · barre da ${ih.barre} min · ${ih.prodotti.join(', ')}${ih.specchio ? ' · con lo specchio' : ''}`),
       h('p', { class: 'muto' }, `Lanciato il ${ih.quando}`)),
@@ -550,18 +495,140 @@ async function paginaEsperimento(nome) {
     h('h2', {}, 'Resoconto'), e.resoconto ? h('div', { class: 'pannello' }, md(e.resoconto)) : h('p', { class: 'muto' }, 'Nessun resoconto scritto.'));
 }
 
-// ------------------------------------------------------------------ alberi
-const LIVELLI = { L0: 'Radice', L2: 'Ingresso', L3: 'Uscita' };
+// ------------------------------------------------------------------ ricerche
+const LIVELLI = { L0: 'Regola semplice', L2: 'Ingresso aggiunto', L3: 'Uscita' };
 const nE = (x, d = 1) => x == null ? '–' : nf(x, d) + ' €';
-async function paginaAlberi() {
+const dataIt = q => q ? new Date(q).toLocaleString('it-IT', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' }) : '–';
+async function paginaRicerche() {
   const mio = giro;
-  const l = await api('/alberi');
-  vedi(mio, h('h1', {}, 'Alberi'), h('p', { class: 'muto' }, 'Ricerca in profondità: ogni radice viene approfondita con ingressi e uscite, e ogni passo deve battere il caso e il genitore.'),
-    l.length ? h('div', { class: 'tabella-cont' }, h('table', {},
-      h('thead', {}, h('tr', {}, ['Nome', 'Prodotto', 'Prove / budget', 'Radici vive', 'Foglie verificate', 'Candidati', 'Lanciato'].map(t => h('th', {}, t)))),
-      h('tbody', {}, l.map(a => h('tr', { class: 'clic', onclick: () => { location.hash = '#/alberi/' + a.nome; } }, h('td', { class: 'sx' }, a.nome), h('td', {}, `${a.prodotto} ${a.barre} min`),
-        h('td', {}, `${a.prove} / ${a.budget}`), h('td', {}, `${a.radici_vive} su ${a.radici}`), h('td', {}, a.foglie), h('td', { class: a.candidati ? 'pos' : '' }, a.candidati),
-        h('td', {}, a.quando.slice(0, 10))))))) : h('p', { class: 'muto' }, 'Nessun albero lanciato. Comando: python -m motore.albero lancia esperimenti/alberi/<nome>.json'));
+  const l = await api('/ricerche');
+  const riga = r => {
+    const vai = () => { location.hash = r.formato === 'esperimento' ? '#/esperimenti/' + r.nome : '#/ricerche/' + r.nome; };
+    const stato = r.stato === 'in corso' ? h('span', { class: 'badge giallo' }, `in corso · ${r.prove || 0} prove`) : r.stato === 'fallita' ? h('span', { class: 'badge rosso' }, 'fallita')
+      : r.candidati ? h('span', { class: 'badge candidato' }, `${r.candidati} da provare`) : h('span', { class: 'badge non_giudicato' }, 'nessun sistema');
+    return h('tr', { class: 'clic', onclick: vai }, h('td', { class: 'sx desc' }, h('strong', {}, r.nome), h('div', { class: 'muto' }, r.formato === 'esperimento' ? 'formato precedente: solo ampiezza, in-sample 2011-2023' : (r.ipotesi || '').slice(0, 110) + ((r.ipotesi || '').length > 110 ? '…' : ''))),
+      h('td', {}, dataIt(r.quando)), h('td', {}, r.prodotto ? `${r.prodotto} ${r.barre} min` : '–'), h('td', {}, r.ampiezza ?? '–'), h('td', {}, r.radici ?? '–'), h('td', {}, r.prove ?? '–'), h('td', {}, stato));
+  };
+  vedi(mio, h('h1', {}, 'Ricerche'),
+    h('p', { class: 'muto' }, 'Ogni ricerca prova molte regole semplici, approfondisce le migliori e mostra solo i sistemi che superano tutti i filtri. Come funziona: ', h('a', { href: '#/come-funziona' }, 'qui'), '.'),
+    l.length ? h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, [['Ricerca', 'sx'], ['Lanciata'], ['Prodotto'], ['Regole semplici'], ['Radici approfondite'], ['Prove totali'], ['Risultato']].map(([t, c]) => h('th', { class: c || null }, t)))),
+      h('tbody', {}, l.map(riga)))) : h('p', { class: 'muto' }, 'Nessuna ricerca. Comando: python -m motore.albero lancia esperimenti/<nome>.json'));
+}
+const STRATI_NOME = { ampiezza: 'Regole provate', L0: 'Primo setaccio', radici: 'Radici scelte', L1: 'Controllo della radice', L2: 'Ingressi', L3: 'Uscite', L4: 'Verifica', finale: 'Da provare su ProRealTime' };
+const STRATI_COL = { ampiezza: 'var(--f-in)', L0: 'var(--f-in)', radici: 'var(--f-in)', L1: 'var(--f-vic)', L2: 'var(--f-vic)', L3: 'var(--f-vic)', L4: 'var(--f-wf)', finale: 'var(--f-out)' };
+/* Imbuto: una riga per strato, barra lunga in proporzione (scala logaritmica) al numero di regole che lo passano. */
+function imbutoSVG(imb) {
+  const W = 600, RH = 34, H = imb.length * RH + 6, max = Math.log10((imb[0].n || 1) + 1), L = 180, BW = W - L - 80;
+  const svg = sv('svg', { viewBox: `0 0 ${W} ${H}`, class: 'imbuto-svg', role: 'img', 'aria-label': 'Quante regole passano ogni strato' });
+  imb.forEach((x, k) => {
+    const y = 4 + k * RH, w = x.n ? Math.max(4, BW * Math.log10(x.n + 1) / max) : 0, cx = L + BW / 2;
+    svg.append(sv('text', { x: L - 12, y: y + RH / 2 + 4, 'text-anchor': 'end', style: 'fill:var(--testo);font-size:13px' }, STRATI_NOME[x.strato] || x.nome));
+    svg.append(sv('rect', { x: cx - BW / 2, y: y + 5, width: BW, height: RH - 10, rx: 4, style: 'fill:var(--bordo);opacity:.35' }));
+    if (w) svg.append(sv('rect', { x: cx - w / 2, y: y + 5, width: w, height: RH - 10, rx: 4, style: `fill:${STRATI_COL[x.strato] || 'var(--f-in)'}` }, sv('title', {}, x.nome)));
+    svg.append(sv('text', { x: L + BW + 12, y: y + RH / 2 + 5, style: `font-size:15px;font-weight:700;fill:${x.n ? 'var(--testo)' : 'var(--rosso)'}` }, String(x.n)));
+    if (x.provati != null) svg.append(sv('text', { x: L + BW + 40, y: y + RH / 2 + 5, style: 'font-size:11px;fill:var(--muto)' }, `su ${x.provati}`));
+  });
+  return svg;
+}
+const MOTIVI_CHIARI = [[/^Pronto|^Guadagno medio in euro/, 'guadagnano troppo poco a trade, anche tenendo solo i trade migliori'], [/^t del guadagno/, 'guadagno medio non distinguibile dal caso'],
+  [/^Trade l'anno/, "troppo pochi trade l'anno"], [/^Mediana fuori campione/, 'perdono sugli anni lasciati fuori'], [/^Gemello/, "perdono sull'Euro Stoxx con la stessa regola"],
+  [/^Metà/, 'perdono in una delle due metà del periodo'], [/^Segnale|^D1|^D2/, "il guadagno viene dall'ora o dalla salita del DAX, non dalla regola"],
+  [/^Batte i filtri/, 'non battono i filtri a caso'], [/^Migliora il genitore|^Soglie vicine|^I trade tolti/, 'non migliorano davvero la regola di partenza'],
+  [/^Utile\/drawdown/, "l'uscita non migliora utile/drawdown"], [/^Scelta fra/, 'la scelta non regge sugli anni lasciati fuori'],
+  [/^Costi doppi/, 'non reggono costi doppi'], [/^DSR/, 'non reggono il conto di tutte le prove fatte'], [/^Walk-forward/, 'la ricerca rifatta anno per anno non guadagna abbastanza'],
+  [/^Regolarità|^Anni positivi/, 'curva poco regolare']];
+const motivoChiaro = m => { if (!m) return ''; const x = MOTIVI_CHIARI.find(([re]) => re.test(m)); return x ? x[1] : m.split(':')[0]; };
+function perche(a) {
+  const conta = {};
+  a.nodi.filter(n => n.esito === 'scartato').forEach(n => { const k = motivoChiaro(n.motivo); conta[k] = (conta[k] || 0) + 1; });
+  a.foglie.filter(f => f.esito !== 'candidato').forEach(f => { const k = 'sistemi finali: ' + motivoChiaro(f.motivo); conta[k] = (conta[k] || 0) + 1; });
+  const righe = Object.entries(conta).sort((x, y) => y[1] - x[1]).slice(0, 5);
+  return righe.length ? h('div', {}, h('div', { class: 'et' }, 'Perché si fermano'), h('ul', { class: 'perche' }, righe.map(([t, n]) => h('li', {}, h('strong', {}, String(n)), ' ', t)))) : null;
+}
+function vicini(a) {
+  const l0 = a.nodi.filter(n => n.livello === 'L0').sort((x, y) => (y.misure.M || 0) - (x.misure.M || 0)).slice(0, 10);
+  return h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, [['', ''], ['Regola', 'sx'], ['€ a trade', '', 'Con la volatilità di oggi, 1 CFD IG, netto'], ['Trade l\'anno'], ['Margine', '', 'Utile annuo diviso il guadagno di 12 trade alla soglia: serve almeno 1,5 per sperare che un filtro porti la regola sopra i 20 €'], ['t', '', 'Quanto il guadagno medio è lontano dal caso: serve almeno 2'], ['Dove si ferma', 'sx']].map(([t, c, ti]) => h('th', { class: c || null, title: ti || null }, t)))),
+    h('tbody', {}, l0.map(n => { const m = n.misure; return h('tr', {}, h('td', {}, miniGrafico({ y: n.mini })), h('td', { class: 'sx' }, n.etichetta), h('td', {}, nE(m.euro_oggi)), h('td', {}, nf(m.trade_anno, 0)),
+      h('td', { class: (m.M || 0) >= 1.5 ? 'pos' : 'neg' }, nf(m.M, 2)), h('td', { class: (m.t || 0) >= 2 ? 'pos' : 'neg' }, nf(m.t, 1)), h('td', { class: 'sx muto' }, n.motivo ? motivoChiaro(n.motivo) : (n.scelta === 'radice' ? 'scelta come radice' : n.scelta || ''))); }))));
+}
+function codiceFoglia(f) {
+  const c = f.prorealcode;
+  if (!c) return h('p', { class: 'muto' }, 'Codice non generato.');
+  const pre = h('pre', { class: 'codice' }, c.codice);
+  const nome = (f.etichetta || 'sistema').replace(/[^A-Za-z0-9]+/g, '-').slice(0, 40) + '.txt';
+  return h('div', {}, h('div', { class: 'filtri' },
+    h('button', { type: 'button', onclick: () => { navigator.clipboard && navigator.clipboard.writeText(c.codice); } }, 'Copia'),
+    h('a', { href: URL.createObjectURL(new Blob([c.codice], { type: 'text/plain' })), download: nome }, 'Scarica .txt'),
+    c.completo ? null : h('span', { class: 'neg' }, 'Da completare a mano: ' + c.da_tradurre.join(', '))), pre);
+}
+function diarioLista(dia) {
+  return h('ol', { class: 'diario' }, (dia || []).map(d => h('li', {}, h('span', { class: 'muto' }, dataIt(d.quando).slice(11) + ' · '), h('strong', {}, d.fase), ' — ', d.testo,
+    d.prove != null ? h('span', { class: 'muto' }, ` (prove fatte: ${d.prove})`) : null)));
+}
+function ramiTabella(a) {
+  const figli = {}; a.nodi.forEach(n => { (figli[n.genitore] = figli[n.genitore] || []).push(n); });
+  const scelte = {}; (a.livelli || []).forEach(l => { scelte[l.genitore + l.livello] = l; });
+  const righe = [];
+  const visita = (n, prof) => {
+    righe.push(...rigaNodo(n, prof));
+    ['L2', 'L3'].forEach(lv => {
+      const ff = (figli[n.id] || []).filter(x => x.livello === lv);
+      if (!ff.length) return;
+      const s = scelte[n.id + lv];
+      if (s) righe.push(h('tr', { class: 'nota-livello' }, h('td', {}), h('td', { colspan: 9, class: 'sx muto', style: `padding-left:${8 + (prof + 1) * 22}px` },
+        `${lv === 'L2' ? 'Ingressi' : 'Uscite'} provati: ${ff.length}. La scelta fra loro, rifatta su 45 divisioni degli anni, guadagna fuori campione ${nf(s.mediana * a.euro_per_escursione_oggi, 1)} € a trade (mediana)`)));
+      ff.forEach(x => visita(x, prof + 1));
+    });
+  };
+  a.nodi.filter(n => n.livello === 'L0' && (n.livello1 || !n.ampiezza)).forEach(r => visita(r, 0));
+  if (!righe.length) return h('p', { class: 'muto' }, 'Nessuna radice approfondita.');
+  return h('div', {}, h('div', { class: 'tabella-cont' }, h('table', { class: 'albero' }, h('thead', {}, h('tr', {}, [['', ''], ['Regola', '', 'sx'], ['€ a trade', 'Guadagno medio netto con la volatilità di oggi; G = quante volte copre la soglia per la sua durata'], ['Trade l\'anno', ''],
+    ['t', 'Guadagno medio diviso il suo errore'], ['R²', 'Regolarità della curva'], ['Drawdown', 'In euro di oggi'], ['Segnale isolato', 'Guadagno a trade meno la stessa finestra in tutti i giorni'], ['Esito', ''], ['Prima porta non superata', '', 'sx']].map(([t, ti, cl]) => h('th', { title: ti || null, class: cl || null }, t)))),
+    h('tbody', {}, righe))), h('p', { class: 'muto' }, 'Clic su una riga per vedere tutte le porte.'));
+}
+async function paginaRicerca(nome) {
+  const mio = giro;
+  const a = await api('/ricerche/' + nome);
+  if (a.in_corso) {
+    const pc_ = a.budget ? Math.min(100, 100 * (a.prove || 0) / a.budget) : 0;
+    vedi(mio, h('p', {}, h('a', { href: '#/ricerche' }, '← Ricerche')), h('h1', {}, nome),
+      h('div', { class: 'pannello' }, h('p', {}, h('strong', {}, a.stato === 'fallita' ? 'Ricerca fallita: ' + (a.errore || '') : `In corso dal ${dataIt(a.inizio)}: ${a.prove || 0} prove su un massimo di ${a.budget}`)),
+        h('div', { class: 'barra' }, h('div', { style: `width:${pc_}%` })), h('p', { class: 'muto' }, a.fase || '')),
+      h('h2', {}, 'Diario'), diarioLista(a.diario));
+    if (a.stato === 'in corso') setTimeout(() => { if (mio === giro) render(); }, 3000);
+    return;
+  }
+  const ih = a.intestazione, cand = a.foglie.filter(f => f.esito === 'candidato'), altre = a.foglie.filter(f => f.esito !== 'candidato');
+  const risultato = cand.length ? h('p', { class: 'grande-esito pos' }, `${cand.length} ${cand.length === 1 ? 'sistema da provare' : 'sistemi da provare'} su ProRealTime.`)
+    : h('p', { class: 'grande-esito' }, 'Nessun sistema da provare su ProRealTime.');
+  vedi(mio, h('p', {}, h('a', { href: '#/ricerche' }, '← Ricerche')), h('h1', {}, nome),
+    h('p', { class: 'muto' }, `${ih.prodotto} ${ih.barre} min · lanciata il ${dataIt(a.quando)} · ${a.prove} prove in ${nf(a.durata_s, 0)} secondi · in-sample ${a.anni[0]}-${a.anni[1]} · euro di oggi: 1 escursione = ${nf(a.euro_per_escursione_oggi, 0)} €`),
+    h('div', { class: 'pannello' }, risultato, h('div', { class: 'imbuto-riga' }, a.imbuto ? imbutoSVG(a.imbuto) : null, perche(a)),
+      h('p', { class: 'muto' }, 'La lunghezza delle barre è in scala logaritmica. ', h('a', { href: '#/come-funziona' }, 'Cosa fa ogni strato'))),
+    cand.length ? h('div', {}, h('h2', {}, 'Da provare su ProRealTime'), cand.map(f => schedaFoglia(a, f))) : null,
+    !cand.length && altre.length ? h('div', {}, h('h2', {}, 'I sistemi finali scartati'), altre.map(f => schedaFoglia(a, f))) : null,
+    !a.foglie.length ? h('div', {}, h('h2', {}, 'Le regole arrivate più vicine'), h('p', { class: 'muto' }, 'Le dieci con il margine più alto. Nessuna arriva in fondo; servono a capire quanto manca.'), vicini(a)) : null,
+    h('h2', {}, 'Dettagli'),
+    sezione('Diario della ricerca', () => diarioLista(a.diario)),
+    sezione('Radici approfondite e loro rami', () => ramiTabella(a)),
+    a.walkforward_ricerca ? sezione('Walk-forward dell\'intera ricerca', () => h('table', {}, h('thead', {}, h('tr', {}, ['Anno', 'Cosa avrebbe scelto la ricerca con gli anni prima', 'Trade', 'Esc. a trade'].map(t => h('th', {}, t)))),
+      h('tbody', {}, a.walkforward_ricerca.anni.map(r => h('tr', {}, h('td', {}, r.anno), h('td', { class: 'sx' }, r.etichetta), h('td', {}, r.n), h('td', { class: segno(r.media_esc) }, nf(r.media_esc, 3))))))) : null,
+    sezione('Ipotesi e ingressi dichiarati prima', () => h('div', {}, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
+      h('ul', {}, (ih.ingressi || []).map(ip => h('li', {}, h('strong', {}, ip.nome), ` (${ip.grandezza} ${ip.op} ${ip.soglie.join(' / ')}): ${ip.meccanismo}`))))),
+    sezione('Tutte le regole semplici provate', () => tutteRegole(a), `${a.nodi.filter(n => n.livello === 'L0').length}`));
+}
+function tutteRegole(a) {
+  let n_ = 60;
+  const box = h('div', {});
+  const disegna = () => {
+    const l0 = a.nodi.filter(n => n.livello === 'L0').sort((x, y) => (y.misure.M || 0) - (x.misure.M || 0));
+    box.replaceChildren(h('div', { class: 'tabella-cont' }, h('table', {}, h('thead', {}, h('tr', {}, ['', 'Regola', '€ a trade', 'Trade l\'anno', 'Margine', 't', 'Esito'].map((t, i) => h('th', { class: i === 1 || i === 6 ? 'sx' : null }, t)))),
+      h('tbody', {}, l0.slice(0, n_).map(n => h('tr', {}, h('td', {}, miniGrafico({ y: n.mini })), h('td', { class: 'sx' }, n.etichetta), h('td', {}, nE(n.misure.euro_oggi)), h('td', {}, nf(n.misure.trade_anno, 0)),
+        h('td', {}, nf(n.misure.M, 2)), h('td', {}, nf(n.misure.t, 1)), h('td', { class: 'sx muto' }, n.motivo ? motivoChiaro(n.motivo) : n.scelta || '')))))),
+      n_ < l0.length ? h('button', { type: 'button', onclick: () => { n_ = l0.length; disegna(); } }, `Mostra tutte (${l0.length})`) : null);
+  };
+  disegna();
+  return box;
 }
 function porteTabella(porte) {
   return h('table', { class: 'porte' }, h('tbody', {}, porte.map(p => h('tr', {}, h('td', {}, h('span', { class: 'pallino ' + p.esito })), h('td', { class: 'sx' }, p.nome),
@@ -614,39 +681,157 @@ function schedaFoglia(a, f) {
     h('div', { class: 'fuori' }, h('strong', {}, 'Walk-forward della procedura: '), `${f.walkforward.n} trade, ${nf(f.walkforward.media_esc, 3)} esc. a trade, efficienza ${nf(f.efficienza_wf, 2)} (soglia 0,5)`));
   return h('div', { class: 'foglia' }, h('h3', {}, f.etichetta, ' ', badge(f.esito), h('span', { class: 'muto' }, ' ' + f.motivo)),
     h('div', { class: 'prima-vista' }, sinistra, destra),
+    sezione('Codice ProRealCode', () => codiceFoglia(f)),
     sezione('Tutte le porte della verifica', () => h('div', {}, porteTabella(f.porte), f.voci_prova_finale ? porteTabella(f.voci_prova_finale) : null)),
     sezione('Anni del walk-forward', () => h('table', {}, h('thead', {}, h('tr', {}, ['Anno', 'Scelta della procedura con gli anni precedenti', 'Trade', 'Esc. a trade'].map(t => h('th', {}, t)))),
       h('tbody', {}, f.walkforward.anni.map(r => h('tr', {}, h('td', {}, r.anno), h('td', { class: 'sx' }, r.etichetta), h('td', {}, r.n), h('td', { class: segno(r.media_esc) }, nf(r.media_esc, 3))))))));
 }
-async function paginaAlbero(nome) {
+// ------------------------------------------------------------------ come funziona
+/* Disegni piccoli, uno per strato. Colori dai token del tema. */
+const D = { W: 360, H: 170 };
+const tela = () => sv('svg', { viewBox: `0 0 ${D.W} ${D.H}`, class: 'disegno', role: 'img' });
+const tx = (x, y, t, st = '') => sv('text', { x, y, style: 'font-size:11px;fill:var(--muto);' + st }, t);
+const curvaPunti = (f, x0, x1, y0, n = 60) => Array.from({ length: n }, (_, i) => { const u = i / (n - 1); return `${x0 + (x1 - x0) * u},${y0 - f(u)}`; }).join(' ');
+const rumore = (seme) => { let s = seme; return () => { s = (s * 9301 + 49297) % 233280; return s / 233280 - 0.5; }; };
+function disegnoAmpiezza() {
+  const g = tela(), R = rumore(3);
+  for (let i = 0; i < 15; i++) for (let j = 0; j < 9; j++) {
+    const v = R(), forte = v > 0.47, medio = v > 0.38;
+    g.append(sv('rect', { x: 40 + i * 19, y: 14 + j * 14, width: 15, height: 11, rx: 2, style: `fill:${forte ? 'var(--f-in)' : 'var(--bordo)'};opacity:${forte ? 1 : medio ? .7 : .35}` }));
+  }
+  g.append(tx(40, 158, 'ora d\'ingresso: 15 →'), tx(4, 14, 'condizione'), tx(4, 26, '9 ↓'), tx(250, 158, '× 4 uscite = 540'));
+  return g;
+}
+function disegnoL0() {
+  const g = tela(), X0 = 130, K = 4;          // 4 pixel per euro
+  const bar = (y, eu, col, et, val) => g.append(sv('rect', { x: X0, y, width: eu * K, height: 20, rx: 3, style: `fill:${col}` }), tx(4, y + 14, et, 'fill:var(--testo)'), tx(X0 + eu * K + 6, y + 14, val, 'fill:var(--testo)'));
+  g.append(sv('line', { x1: X0 + 20 * K, x2: X0 + 20 * K, y1: 14, y2: 100, style: 'stroke:var(--rosso);stroke-dasharray:4 3' }), tx(X0 + 20 * K - 26, 12, 'soglia 20 €', 'fill:var(--rosso)'));
+  bar(24, 3.8, 'var(--f-in)', 'guadagno a trade', '3,8 €');
+  bar(64, 41, 'var(--f-vic)', 'margine', '41 €');
+  g.append(tx(4, 128, "Esempio: 130 trade l'anno a 3,8 € = 494 € l'anno."), tx(4, 144, 'Se un filtro tenesse solo i 12 migliori: 494 / 12 = 41 € a trade,'), tx(4, 160, "sopra 1,5 volte la soglia: c'è margine, la regola passa."));
+  return g;
+}
+function disegnoRadici() {
+  const g = tela();
+  g.append(sv('polyline', { points: curvaPunti(u => 100 * u + 8 * Math.sin(u * 20), 20, 340, 140), style: 'fill:none;stroke:var(--f-in);stroke-width:2' }));
+  g.append(sv('polyline', { points: curvaPunti(u => 96 * u + 9 * Math.sin(u * 20 + .3), 20, 340, 140), style: 'fill:none;stroke:var(--muto);stroke-width:1.5;stroke-dasharray:4 3' }));
+  g.append(sv('polyline', { points: curvaPunti(u => 70 * u + 14 * Math.sin(u * 7 + 2), 20, 340, 150), style: 'fill:none;stroke:var(--f-vic);stroke-width:2' }));
+  g.append(tx(220, 24, 'tenuta'), tx(220, 38, 'simile alla prima: saltata', ''), tx(250, 98, 'diversa: tenuta'));
+  return g;
+}
+function disegnoL1() {
+  const g = tela();
+  g.append(sv('polygon', { points: curvaPunti(u => 110 * u + 6 * Math.sin(u * 18), 20, 340, 145) + ' ' + curvaPunti(u => 45 * (1 - u), 340, 20, 145), style: 'fill:var(--f-vic);opacity:.18' }));
+  g.append(sv('polyline', { points: curvaPunti(u => 110 * u + 6 * Math.sin(u * 18), 20, 340, 145), style: 'fill:none;stroke:var(--f-in);stroke-width:2' }));
+  g.append(sv('polyline', { points: curvaPunti(u => 45 * u, 20, 340, 145), style: 'fill:none;stroke:var(--muto);stroke-width:1.5;stroke-dasharray:4 3' }));
+  g.append(tx(230, 30, 'il sistema'), tx(230, 118, 'stessa ora, tutti i giorni'), tx(150, 80, 'segnale isolato', 'fill:var(--f-vic);font-weight:600'));
+  return g;
+}
+function disegnoL2() {
+  const g = tela();
+  for (let i = 0; i < 30; i++) { const x = (i - 15) / 5, hh = 110 * Math.exp(-x * x / 2); g.append(sv('rect', { x: 20 + i * 9, y: 140 - hh, width: 8, height: hh, style: `fill:${i >= 25 ? 'var(--rosso)' : 'var(--bordo)'};opacity:${i >= 25 ? .5 : .8}` })); }
+  g.append(sv('line', { x1: 320, x2: 320, y1: 20, y2: 140, style: 'stroke:var(--f-vic);stroke-width:3' }), tx(258, 16, 'il filtro provato', 'fill:var(--f-vic);font-weight:600'),
+    tx(20, 158, '1.000 filtri a caso che tolgono gli stessi trade'), tx(245, 150, 'oltre il 95%', 'fill:var(--rosso)'));
+  return g;
+}
+function disegnoL3() {
+  const g = tela();
+  g.append(sv('line', { x1: 20, x2: 340, y1: 70, y2: 70, style: 'stroke:var(--bordo)' }), tx(4, 66, 'ingresso'));
+  g.append(sv('polyline', { points: curvaPunti(u => -20 * Math.sin(u * 5) + 60 * u * u, 20, 340, 70), style: 'fill:none;stroke:var(--f-in);stroke-width:2' }));
+  g.append(sv('line', { x1: 20, x2: 340, y1: 110, y2: 110, style: 'stroke:var(--rosso);stroke-dasharray:4 3' }), tx(250, 126, 'stop sotto il fondo dei vincenti', 'fill:var(--rosso)'));
+  [[120, '17:30'], [230, '21:55'], [330, 'domani']].forEach(([x, t]) => g.append(sv('line', { x1: x, x2: x, y1: 20, y2: 140, style: 'stroke:var(--f-vic);stroke-dasharray:2 3' }), tx(x - 14, 155, t)));
+  return g;
+}
+function disegnoL4() {
+  const g = tela();
+  ['ricalcolo minuto per minuto', 'costi IG raddoppiati', 'stessa regola sull\'Euro Stoxx', 'conta tutte le prove fatte (DSR)', 'ricerca rifatta anno per anno', 'curva regolare, anni positivi'].forEach((t, i) => {
+    const y = 20 + i * 24;
+    g.append(sv('circle', { cx: 24, cy: y, r: 8, style: 'fill:var(--f-wf)' }), sv('text', { x: 20, y: y + 4, style: 'font-size:11px;fill:#000;font-weight:700' }, '✓'), tx(40, y + 4, t, 'fill:var(--testo);font-size:12px'));
+  });
+  return g;
+}
+function disegnoFinale() {
+  const g = tela(), parti = [['2008-10', 14, 'var(--f-ind)', 'conta poco'], ['2011-13', 14, 'var(--f-vic)', 'non deve perdere'], ['2014-2023: ricerca', 46, 'var(--f-in)', ''], ['2024-25', 10, 'var(--f-out)', 'decide'], ['ProRealTime', 16, 'var(--muto)', 'tu']];
+  let x = 10;
+  parti.forEach(([t, w, c, sotto]) => { const ww = w * 3.4; g.append(sv('rect', { x, y: 50, width: ww - 3, height: 34, rx: 3, style: `fill:${c};opacity:.85` }), tx(x + 3, 44, t, 'fill:var(--testo)'), tx(x + 3, 102, sotto)); x += ww; });
+  return g;
+}
+const STRATI = [
+  { id: 'ampiezza', titolo: 'Ampiezza', sotto: 'molte regole semplici', disegno: disegnoAmpiezza,
+    cosa: 'Prova tutte le combinazioni di poche scelte semplici: ora d\'ingresso, una condizione sulla giornata, uscita.',
+    filtro: ['Nessun filtro qui: ogni regola è una prova e finisce nel registro.'],
+    perche: 'Trovare dove c\'è qualcosa senza inventare regole complicate.' },
+  { id: 'L0', titolo: 'Primo setaccio', sotto: 'guadagno, margine, non caso', disegno: disegnoL0,
+    cosa: 'Tiene le regole che o guadagnano già abbastanza a trade, o hanno margine per arrivarci con un filtro.',
+    filtro: ['Guadagno medio sopra la soglia (20/30/50 € secondo la durata) oppure margine almeno 1,5', 'Guadagno medio lontano dal caso (t almeno 2)', 'Almeno 6 trade l\'anno', 'Positiva sugli anni lasciati fuori (CPCV, sotto)'],
+    perche: 'Un filtro toglie trade, non ne aggiunge: se l\'utile dell\'anno non basta, nessun filtro salverà la regola.' },
+  { id: 'radici', titolo: 'Scelta delle radici', sotto: 'le migliori, diverse', disegno: disegnoRadici,
+    cosa: 'Fra quelle che passano prende le 10 migliori, saltando quelle che guadagnano negli stessi giorni di una già presa.',
+    filtro: ['Ordine: copertura della soglia × regolarità × distanza dal caso', 'Saltata se i risultati giornalieri sono correlati oltre 0,7 con una già scelta'],
+    perche: 'Dieci varianti della stessa idea sono un\'idea sola: meglio approfondire idee diverse.' },
+  { id: 'L1', titolo: 'Controllo della radice', sotto: 'gemello, metà, segnale', disegno: disegnoL1,
+    cosa: 'Verifica che il vantaggio sia della regola e non del DAX che sale.',
+    filtro: ['Stessa regola sull\'Euro Stoxx: deve guadagnare anche lì', 'Positiva sia nel 2014-2018 sia nel 2019-2023', 'Segnale isolato: guadagno meno quello della stessa ora in tutti i giorni, almeno metà del totale'],
+    perche: 'Un long sul DAX guadagna anche solo perché il DAX nel lungo periodo sale.' },
+  { id: 'L2', titolo: 'Ingressi', sotto: 'una o due condizioni', disegno: disegnoL2,
+    cosa: 'Aggiunge alla radice una condizione per volta, scelta da un elenco di ipotesi scritte prima con il loro motivo.',
+    filtro: ['Batte il 95% dei filtri a caso che tolgono gli stessi trade (99% per la seconda condizione)', 'Migliora la radice in almeno 2 terzi del periodo su 3', 'Le soglie vicine vanno nella stessa direzione', 'I trade tolti vanno peggio di quelli tenuti'],
+    perche: 'Scegliere i giorni migliori fra tanti è facile anche a caso: il confronto con il caso dice se il filtro sa qualcosa.' },
+  { id: 'L3', titolo: 'Uscite', sotto: 'quando chiudere', disegno: disegnoL3,
+    cosa: 'Prova poche uscite diverse e uno stop messo appena sotto il punto più basso toccato dai trade vincenti.',
+    filtro: ['Utile / drawdown migliore di prima', 'Scelta misurata sugli anni lasciati fuori'],
+    perche: 'Lo stop non si cerca provando tutti i valori, si legge dai trade.' },
+  { id: 'L4', titolo: 'Verifica', sotto: 'nessuna ricerca, solo prove', disegno: disegnoL4,
+    cosa: 'I sistemi finali passano controlli che non scelgono niente, li confermano o li scartano.',
+    filtro: ['Ricalcolo con i dati al minuto (stop e target dentro la barra)', 'Costi IG doppi: deve restare positivo', 'Euro Stoxx', 'DSR: probabilità che il risultato regga dopo tutte le prove fatte', 'Ricerca rifatta anno per anno con i soli anni precedenti: deve guadagnare almeno metà', 'Filtri di Andrea: soglia in euro, curva regolare (R² 0,85), 70% di anni positivi'],
+    perche: 'Ogni prova in più aumenta la probabilità di trovare un caso fortunato: qui si paga il conto.' },
+  { id: 'finale', titolo: 'Prova finale', sotto: 'anni mai guardati', disegno: disegnoFinale,
+    cosa: 'Una volta sola, sui sistemi che hanno passato tutto, si guardano gli anni tenuti da parte.',
+    filtro: ['2024-2025: utile positivo e almeno metà del guadagno a trade dell\'in-sample', '2011-2013: non deve perdere né andare in modo disastroso', 'Prima del 2011: scarta solo se disastroso', 'Chi passa compare nella ricerca come "da provare su ProRealTime"'],
+    perche: 'Il futuro recente conta più del passato lontano: il mercato cambia.' },
+];
+async function paginaComeFunziona() {
   const mio = giro;
-  const a = await api('/alberi/' + nome), ih = a.intestazione;
-  const figli = {}; a.nodi.forEach(n => { (figli[n.genitore] = figli[n.genitore] || []).push(n); });
-  const scelte = {}; (a.livelli || []).forEach(l => { scelte[l.genitore + l.livello] = l; });
-  const righe = [];
-  const visita = (n, prof) => {
-    righe.push(...rigaNodo(n, prof));
-    ['L2', 'L3'].forEach(lv => {
-      const ff = (figli[n.id] || []).filter(x => x.livello === lv);
-      if (!ff.length) return;
-      const s = scelte[n.id + lv];
-      if (s) righe.push(h('tr', { class: 'nota-livello' }, h('td', {}), h('td', { colspan: 9, class: 'sx muto', style: `padding-left:${8 + (prof + 1) * 22}px` },
-        `${lv === 'L2' ? 'Ingressi' : 'Uscite'} provati: ${ff.length}. Scelta fra fratelli misurata fuori campione (CPCV): mediana ${nf(s.mediana * a.euro_per_escursione_oggi, 1)} € a trade, 10° percentile ${nf(s.p10 * a.euro_per_escursione_oggi, 1)} €`)));
-      ff.forEach(x => visita(x, prof + 1));
-    });
+  let imb = null, nomeRic = null;
+  try {
+    const l = (await api('/ricerche')).filter(r => r.formato === 'ricerca' && r.stato === 'finita' && r.ampiezza);
+    if (l.length) { nomeRic = l[0].nome; imb = (await api('/ricerche/' + nomeRic)).imbuto; }
+  } catch (e) { /* senza ricerche la pagina si mostra lo stesso */ }
+  const conta = {}; (imb || []).forEach(x => { conta[x.strato] = x; });
+  let sel = memo('strato') || 'ampiezza';
+  const pannello = h('div', { class: 'cf-pannello' });
+  const chips = h('div', { class: 'cf-percorso' });
+  const mostra = id => {
+    sel = id; memo('strato', id);
+    const s = STRATI.find(x => x.id === id);
+    chips.querySelectorAll('button').forEach(b => b.classList.toggle('sel', b.dataset.id === id));
+    const c = conta[id];
+    pannello.replaceChildren(h('div', { class: 'cf-disegno' }, s.disegno()),
+      h('div', { class: 'cf-testo' }, h('h3', {}, s.titolo), h('p', {}, s.cosa), h('div', { class: 'et' }, 'Il filtro'), h('ul', {}, s.filtro.map(f => h('li', {}, f))),
+        h('p', { class: 'muto' }, s.perche),
+        c ? h('p', { class: 'cf-numero' }, `Nella ricerca ${nomeRic}: `, h('strong', {}, String(c.n)), c.provati != null ? ` su ${c.provati} provati` : '', ` · ${c.nome.toLowerCase()}`) : null));
   };
-  (figli[null] || figli['null'] || a.nodi.filter(n => !n.genitore)).forEach(r => visita(r, 0));
-  vedi(mio, h('p', {}, h('a', { href: '#/alberi' }, '← Alberi')), h('h1', {}, nome),
-    h('div', { class: 'pannello' }, h('p', {}, h('strong', {}, 'Ipotesi: '), ih.ipotesi), h('p', {}, h('strong', {}, 'Meccanismo: '), ih.meccanismo),
-      h('p', { class: 'muto' }, `${ih.prodotto} ${ih.barre} min · gemello ${ih.gemello || 'nessuno'} · in-sample ${a.anni[0]}-${a.anni[1]} · ${a.prove} prove su ${a.budget}${a.budget_esaurito ? ' (budget esaurito)' : ''} · ` +
-        `euro di oggi: 1 escursione = ${nf(a.euro_per_escursione_oggi, 0)} € (escursione media del ${a.anni[1]}: ${nf(a.esc_oggi_punti, 0)} punti)`)),
-    h('h2', {}, 'Rami'),
-    h('div', { class: 'tabella-cont' }, h('table', { class: 'albero' }, h('thead', {}, h('tr', {}, [['', ''], ['Nodo', '', 'sx'], ['€ a trade', 'Guadagno medio netto con la volatilità di oggi; G = quante volte copre la soglia per la sua durata'], ['Trade l\'anno', ''],
-      ['t', 'Guadagno medio diviso il suo errore'], ['R²', 'Regolarità della curva'], ['Drawdown', 'In euro di oggi'], ['Segnale isolato', 'Guadagno a trade meno la stessa finestra in tutti i giorni'], ['Esito', ''], ['Prima porta non superata', '', 'sx']].map(([t, ti, cl]) => h('th', { title: ti || null, class: cl || null }, t)))),
-      h('tbody', {}, righe))),
-    h('p', { class: 'muto' }, 'Clic su una riga per vedere tutte le porte del nodo.'),
-    h('h2', {}, 'Foglie verificate'),
-    a.foglie.length ? h('div', {}, a.foglie.map(f => schedaFoglia(a, f))) : h('p', { class: 'muto' }, 'Nessuna foglia: tutte le radici si sono fermate prima degli ingressi.'));
+  STRATI.forEach((s, k) => {
+    if (k) chips.append(h('span', { class: 'freccia' }, '→'));
+    const c = conta[s.id];
+    chips.append(h('button', { type: 'button', 'data-id': s.id, onclick: () => mostra(s.id) }, h('strong', {}, s.titolo), h('span', {}, s.sotto), c ? h('em', {}, String(c.n)) : null));
+  });
+  mostra(STRATI.some(x => x.id === sel) ? sel : 'ampiezza');
+  const periodi = h('div', { class: 'cf-periodi' }, [['2008-2010', 'f-ind', 'fuori campione lontano', 'scarta solo se disastroso', 3],
+    ['2011-2013', 'f-vic', 'fuori campione vicino', 'scarta se perde o è disastroso', 3], ['2014-2023', 'f-in', 'in-sample: tutta la ricerca', 'diviso in 10 anni: si sceglie su 8, si misura sui 2 lasciati fuori, in tutti i 45 modi', 10],
+    ['2024 – mag 2025', 'f-out', 'prova finale', 'decide, una volta sola', 1.5], ['da nov 2025', 'muto', 'ProRealTime', 'il tuo fuori campione', 2.5]].map(([a, c, t, d, w]) =>
+    h('div', { style: `flex:${w}` }, h('div', { class: 'cf-blocco', style: `background:var(--${c})` }, a), h('strong', {}, t), h('div', { class: 'muto' }, d))));
+  const cpcv = h('div', { class: 'cf-cpcv' }, Array.from({ length: 10 }, (_, i) => h('span', { class: i === 2 || i === 7 ? 'test' : '' }, String(2014 + i))));
+  let giroC = 0;
+  const anima = setInterval(() => { if (!document.body.contains(cpcv)) return clearInterval(anima); giroC++; const a = giroC % 10, b = (giroC * 3 + 4) % 10 === a ? (a + 5) % 10 : (giroC * 3 + 4) % 10; [...cpcv.children].forEach((x, i) => x.classList.toggle('test', i === a || i === b)); }, 1400);
+  vedi(mio, h('h1', {}, 'Come funziona'),
+    h('p', { class: 'muto' }, 'Una ricerca parte da centinaia di regole semplici e le fa passare per otto strati. A ogni strato si perde qualcuno; alla fine si vede solo chi è arrivato in fondo. Clic su uno strato.'),
+    chips, pannello,
+    h('h2', {}, 'Quali anni servono a cosa'), periodi,
+    h('div', { class: 'cf-riga' }, h('div', {}, h('h3', {}, 'Anni lasciati fuori, a turno'), h('p', { class: 'muto' }, 'Dentro il 2014-2023 ogni scelta si fa su 8 anni e si misura sui 2 lasciati fuori (in arancio), cambiando coppia 45 volte. Conta il risultato sugli anni lasciati fuori.'), cpcv),
+      h('div', {}, h('h3', {}, 'Euro di oggi'), h('p', { class: 'muto' }, 'Il DAX del 2017 si muoveva di 115 punti al giorno, quello del 2023 di 190. I guadagni si misurano in "giornate medie" e si riportano in euro con la volatilità del 2023, così un trade del 2017 pesa come uno di oggi.'))),
+    h('h2', {}, 'Cosa vedi alla fine'),
+    h('p', { class: 'muto' }, 'Nella pagina della ricerca: l\'imbuto con quanti passano ogni strato e, sotto, solo i sistemi da provare su ProRealTime. Per ognuno: la curva quadrata con gli anni colorati e la linea tratteggiata della stessa ora in tutti i giorni, sette numeri (guadagno a trade, drawdown, lordo/costi, ore in mercato, regolarità, trade l\'anno, segnale isolato) e il codice ProRealCode da copiare. Tutto il resto è chiuso in sezioni da aprire.'));
 }
 
 // ------------------------------------------------------------------ registro e portafoglio
@@ -670,17 +855,17 @@ function paginaPortafoglio() {
 }
 
 // ------------------------------------------------------------------ router
-const ROTTE = [[/^\/sistemi$/, paginaSistemi], [/^\/sistemi\/([^/]+)\/([^/]+)(?:\/[a-z]+)?$/, paginaScheda], [/^\/esperimenti$/, paginaEsperimenti],
-  [/^\/esperimenti\/([^/]+)$/, paginaEsperimento], [/^\/alberi$/, paginaAlberi], [/^\/alberi\/([^/]+)$/, paginaAlbero],
+const ROTTE = [[/^\/ricerche$/, paginaRicerche], [/^\/ricerche\/([^/]+)$/, paginaRicerca], [/^\/come-funziona$/, paginaComeFunziona],
+  [/^\/sistemi\/([^/]+)\/([^/]+)(?:\/[a-z]+)?$/, paginaScheda], [/^\/esperimenti\/([^/]+)$/, paginaEsperimento],
   [/^\/registro$/, paginaRegistro], [/^\/portafoglio$/, paginaPortafoglio]];
 async function render() {
-  const mio = ++giro, p = decodeURIComponent(location.hash.replace(/^#/, '')) || '/sistemi';
-  document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('attiva', p.startsWith('/' + a.dataset.voce)));
+  const mio = ++giro, p = decodeURIComponent(location.hash.replace(/^#/, '')) || '/ricerche';
+  document.querySelectorAll('#menu a').forEach(a => a.classList.toggle('attiva', p.startsWith('/' + a.dataset.voce) || (a.dataset.voce === 'ricerche' && /^\/(sistemi|esperimenti)/.test(p))));
   for (const [re, f] of ROTTE) {
     const m = p.match(re);
     if (!m) continue;
     try { await f(...m.slice(1)); } catch (e) { if (mio === giro) app.replaceChildren(h('p', { class: 'neg' }, 'Errore: ' + e.message)); }
-    if (!p.includes('/sistemi/')) window.scrollTo(0, 0);
+    if (!p.includes('/sistemi/') && !p.startsWith('/ricerche/')) window.scrollTo(0, 0);
     return;
   }
   app.replaceChildren(h('p', { class: 'muto' }, 'Pagina non trovata.'));
@@ -689,4 +874,5 @@ function tema(t) { document.documentElement.dataset.theme = t; document.getEleme
 document.getElementById('tema').addEventListener('click', () => tema(document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark'));
 tema(memo('tema') === 'light' ? 'light' : 'dark');
 window.addEventListener('hashchange', render);
+api('/versione').then(v => { const el = document.getElementById('versione'); if (el && v.commit) el.textContent = `Fafnir2 · versione ${v.commit} del ${dataIt(v.quando).slice(0, 10)}`; if (el) el.title = v.titolo || ''; }).catch(() => {});
 render();

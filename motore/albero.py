@@ -28,16 +28,17 @@ import math
 import sys
 import time
 from datetime import datetime, timezone
+from itertools import product
 from pathlib import Path
 
 import numpy as np
 import polars as pl
 
-from . import catalogo, condizioni, dati, giudizio, metriche, prova_finale, validazione
+from . import catalogo, condizioni, dati, giudizio, metriche, prova_finale, uscita, validazione
 from .config import RISULTATI, SCOPERTA, WF_PRIMO_ANNO
 from .motori import backtest, eventi
 
-CARTELLA = RISULTATI / "alberi"     # i test la sostituiscono con una cartella temporanea
+CARTELLA = RISULTATI / "ricerche"   # i test la sostituiscono con una cartella temporanea
 
 # ---- porte (protocollo, "Porte come funzioni di altre metriche")
 T_MIN = 2.0                          # guadagno medio / errore standard
@@ -52,8 +53,7 @@ PERMUTAZIONI = 1000
 MIN_TRADE_TRAIN = 10                 # trade minimi negli anni di training per scegliere un fratello
 SOGLIE_STOP = (0.25, 0.5, 0.75, 1.0, 1.5)   # valori tondi per lo stop ricavato dall'escursione contraria
 
-OBBLIGATORI = {"tipo": str, "nome": str, "ipotesi": str, "prodotto": str, "barre": int, "budget": int,
-               "radici": list, "ingressi": list}
+OBBLIGATORI = {"tipo": str, "nome": str, "ipotesi": str, "prodotto": str, "barre": int, "budget": int, "ingressi": list}
 
 
 # ---------------------------------------------------------------- contesto e nodi
@@ -363,9 +363,15 @@ class Albero:
         self._trade: dict[str, pl.DataFrame] = {}
         self._ann: dict[str, np.ndarray] = {}
         self.livelli: list[dict] = []        # CPCV della scelta fra fratelli per ogni gruppo di figli
+        self.diario: list[dict] = []         # passi della ricerca, per il cruscotto
+        self.osserva = None                  # funzione (prove fatte, budget) chiamata a ogni nodo
+        self.wf_ricerca: dict | None = None
 
     # -- nodi
-    def nodo(self, regola: dict, livello: str, genitore: str | None, etichetta: str, n_cond: int, conta: bool = True) -> dict | None:
+    def nodo(self, regola: dict, livello: str, genitore: str | None, etichetta: str, n_cond: int, conta: bool = True,
+             leggero: bool = False) -> dict | None:
+        """Valuta una regola e la aggiunge all'albero. `leggero`: senza strato differenziale (ampiezza: si calcola
+        solo per chi passa il primo livello)."""
         if conta:
             if self.prove >= self.budget:
                 self.esaurito = True
@@ -378,8 +384,10 @@ class Albero:
               "n_cond": n_cond, "misure": m, "punteggio": punteggio(m), "porte": [], "esito": "da valutare", "motivo": None}
         self._trade[id_], self._ann[id_] = t, _annuali(self.ctx, t)
         nd["cpcv"] = cpcv_nodo(self.ctx, self._ann[id_])
-        nd["differenziale"] = differenziale(self.ctx, regola, t, int(regola["lato"]))
+        nd["differenziale"] = {} if leggero else differenziale(self.ctx, regola, t, int(regola["lato"]))
         self.nodi.append(nd)
+        if self.osserva:
+            self.osserva(self.prove, self.budget)
         return nd
 
     def _chiudi(self, nd: dict, porte: list[dict], esito_ok: str = "passa"):
@@ -392,6 +400,10 @@ class Albero:
         return self._trade[id_]
 
     # -- livelli
+    def nota(self, fase: str, testo: str, entrati: int | None = None, usciti: int | None = None):
+        self.diario.append({"quando": datetime.now(timezone.utc).isoformat(timespec="seconds"), "fase": fase, "testo": testo,
+                            "entrati": entrati, "usciti": usciti, "prove": self.prove})
+
     def radice(self, r: dict) -> dict | None:
         nd = self.nodo(r["regola"], "L0", None, r.get("nome", "radice"), 0)
         if nd is None:
@@ -399,7 +411,13 @@ class Albero:
         nd["descrizione"] = r.get("descrizione")
         if not self._chiudi(nd, porte_radice(nd["misure"], nd["cpcv"])):
             return nd
-        # L1: gemello, due metà, strato differenziale
+        return self.livello1(nd)
+
+    def livello1(self, nd: dict) -> dict:
+        """L1 sulla radice: gemello, due metà del periodo, strato differenziale."""
+        if not nd["differenziale"]:
+            nd["differenziale"] = differenziale(self.ctx, nd["regola"], self.trade(nd["id"]), int(nd["regola"]["lato"]))
+        nd["livello1"] = True
         porte = []
         gem = self.spec.get("gemello")
         if gem:
@@ -562,46 +580,135 @@ class Albero:
         return {"anni": righe, "n": int(tot[0]), "media_esc": _r(tot[1] / tot[0]) if tot[0] else None}
 
     # -- esecuzione
+    # -- ampiezza: molte regole semplici, poi la scelta delle radici
+    def ampiezza(self, log=print) -> list[dict]:
+        """Prova ogni combinazione della griglia di `ampiezza` come radice (L0), poi sceglie fino a `max_radici` radici
+        fra quelle che passano, in ordine di punteggio e saltando quelle troppo simili a una già scelta (correlazione
+        dei risultati giornalieri oltre `correlazione_max`)."""
+        a = self.spec["ampiezza"]
+        chiavi = list(a["griglia"])
+        combinazioni = list(product(*(a["griglia"][k] for k in chiavi)))
+        self.nota("ampiezza", f"{len(combinazioni)} regole semplici da provare", len(combinazioni))
+        nodi = []
+        for valori in combinazioni:
+            reg = copy.deepcopy(a["base"])
+            for k, v in zip(chiavi, valori):
+                if k == "ingresso":
+                    reg["da"] = reg["a"] = v
+                else:
+                    reg[k] = copy.deepcopy(v)
+            nd = self.nodo(reg, "L0", None, descrivi(reg, self.ctx.barre), 0, leggero=True)
+            if nd is None:
+                break
+            nd["ampiezza"] = True
+            self._chiudi(nd, porte_radice(nd["misure"], nd["cpcv"]))
+            nodi.append(nd)
+        passano = sorted([n for n in nodi if n["esito"] != "scartato"], key=lambda n: -n["punteggio"])
+        self.nota("ampiezza", f"{len(passano)} su {len(nodi)} passano il primo livello (guadagno o margine, t >= 2, fuori campione CPCV positivo)",
+                  len(nodi), len(passano))
+        cmax, kmax = float(a.get("correlazione_max", 0.7)), int(a.get("max_radici", 10))
+        scelte, serie = [], []
+        for n in passano:
+            g = self.ctx.giornaliera(self.trade(n["id"]))
+            simile = next((s_ for s_, gs in zip(scelte, serie) if np.corrcoef(g, gs)[0, 1] > cmax), None)
+            if simile is not None:
+                n["scelta"] = f"simile a {simile['etichetta']}"
+            elif len(scelte) >= kmax:
+                n["scelta"] = f"oltre le prime {kmax}"
+            else:
+                n["scelta"] = "radice"
+                scelte.append(n)
+                serie.append(g)
+        self.nota("radici", f"{len(scelte)} radici scelte (le migliori, saltando quelle simili fra loro)", len(passano), len(scelte))
+        return scelte
+
+    def profondita(self, rad: dict, log=print) -> list[dict]:
+        """L2 e L3 su una radice che ha passato L1: ingressi in due giri, poi le uscite sui rami migliori."""
+        spec = self.spec
+        candidati = [rad] if rad["esito"] == "pronto" else []
+        frontiera = [rad] if (rad["misure"].get("M") or 0) >= M_MIN else []
+        for _ in range(int(spec.get("max_condizioni", 2))):
+            nuova = []
+            for p in frontiera:
+                ok = sorted(self.figli(p), key=lambda n: -n["punteggio"])
+                nuova += ok[: int(spec.get("rami_per_livello", 3))]
+                log(f"  {p['etichetta']}: {len(ok)} figli passano" + (" (budget esaurito)" if self.esaurito else ""))
+            candidati += nuova
+            frontiera = [n for n in nuova if n["misure"].get("trade_anno", 0) >= TRADE_ANNO_RAMO and (n["misure"].get("M") or 0) >= 1]
+            if self.esaurito:
+                break
+        if not candidati:
+            candidati = [rad]
+        candidati.sort(key=lambda n: ((n["misure"].get("G") or 0) >= 1, n["punteggio"]), reverse=True)   # prima i pronti
+        finali = [self.uscite(c) for c in candidati[: int(spec.get("foglie_per_radice", 3))]]
+        return list({f["id"]: f for f in finali}.values())
+
     def esegui(self, log=print) -> dict:
         t0 = time.time()
         spec = self.spec
-        foglie_per_radice = []
-        for r in spec["radici"]:
+        radici = []
+        for r in spec.get("radici", []):
             rad = self.radice(r)
             if rad is None:
                 break
             log(f"{rad['etichetta']}: {rad['esito']}" + (f" ({rad['motivo']})" if rad["motivo"] else ""))
-            if rad["esito"] == "scartato":
-                continue
-            candidati = [rad] if rad["esito"] == "pronto" else []
-            frontiera = [rad] if (rad["misure"].get("M") or 0) >= M_MIN else []
-            for _ in range(int(spec.get("max_condizioni", 2))):
-                nuova = []
-                for p in frontiera:
-                    ok = sorted(self.figli(p), key=lambda n: -n["punteggio"])
-                    nuova += ok[: int(spec.get("rami_per_livello", 3))]
-                    log(f"  {p['etichetta']}: {len(ok)} figli passano" + (" (budget esaurito)" if self.esaurito else ""))
-                candidati += nuova
-                frontiera = [n for n in nuova if n["misure"].get("trade_anno", 0) >= TRADE_ANNO_RAMO
-                             and (n["misure"].get("M") or 0) >= 1]
-                if self.esaurito:
-                    break
-            if not candidati and rad["esito"] != "scartato":
-                candidati = [rad]
-            candidati.sort(key=lambda n: ((n["misure"].get("G") or 0) >= 1, n["punteggio"]), reverse=True)   # prima i pronti
-            finali = []
-            for c in candidati[: int(spec.get("foglie_per_radice", 3))]:
-                finali.append(self.uscite(c))
-            foglie_per_radice.append((rad, list({f["id"]: f for f in finali}.values())))
+            radici.append(rad)
+        if spec.get("ampiezza"):
+            for rad in self.ampiezza(log):
+                self.livello1(rad)
+                log(f"{rad['etichetta']}: {rad['esito']}" + (f" ({rad['motivo']})" if rad["motivo"] else ""))
+                radici.append(rad)
+        vive = [r for r in radici if r["esito"] != "scartato"]
+        self.nota("radice", f"{len(vive)} radici su {len(radici)} reggono gemello, due metà del periodo e segnale isolato", len(radici), len(vive))
+        foglie_per_radice = []
+        for rad in vive:
             if self.esaurito:
-                log("budget esaurito")
                 break
+            foglie_per_radice.append((rad, self.profondita(rad, log)))
+        l2 = [n for n in self.nodi if n["livello"] == "L2"]
+        l3 = [n for n in self.nodi if n["livello"] == "L3"]
+        self.nota("ingressi", f"{len(l2)} condizioni aggiunte alle radici, {sum(n['esito'] != 'scartato' for n in l2)} battono il caso e il genitore",
+                  len(l2), sum(n["esito"] != "scartato" for n in l2))
+        self.nota("uscite", f"{len(l3)} uscite provate, {sum(n['esito'] != 'scartato' for n in l3)} migliorano utile/drawdown",
+                  len(l3), sum(n["esito"] != "scartato" for n in l3))
+        if self.esaurito:
+            self.nota("budget", f"budget di {self.budget} prove esaurito: la ricerca si ferma qui")
         foglie = []
+        self.wf_ricerca = self.walkforward_ricerca() if spec.get("ampiezza") else None
         for rad, finali in foglie_per_radice:
-            wf = self.walkforward(rad)
+            wf = self.wf_ricerca or self.walkforward(rad)
             for f in finali:
                 foglie.append(self.verifica(f, wf))
+        self.nota("verifica", f"{len(foglie)} sistemi finali verificati (minuto per minuto, costi doppi, gemello, DSR, walk-forward), "
+                              f"{sum(f['passa_scoperta'] for f in foglie)} passano", len(foglie), sum(f["passa_scoperta"] for f in foglie))
         return {"durata_s": round(time.time() - t0, 1), "foglie": foglie}
+
+    def walkforward_ricerca(self) -> dict:
+        """Walk-forward dell'intera ricerca: per ogni anno sceglie la radice migliore con gli anni precedenti (stesso
+        punteggio dell'ampiezza, calcolato solo su quegli anni), poi ripete le scelte dell'albero su quella radice."""
+        anni = np.array(self.ctx.anni)
+        radici = [n for n in self.nodi if n["livello"] == "L0"]
+        righe, tot = [], np.zeros(3)
+        for y in range(max(WF_PRIMO_ANNO, anni[0] + 1), anni[-1] + 1):
+            mtr = anni < y
+            migliore, smax = None, -math.inf
+            for r in radici:
+                n, m, t = _stat(self._ann[r["id"]], mtr)
+                ric = r["misure"].get("richiesto")
+                if n < MIN_TRADE_TRAIN or t is None or t < T_MIN or m <= 0 or not ric or self.ctx.euro_esc is None:
+                    continue
+                sc = m * self.ctx.euro_esc / ric * min(1.0, t / 3)
+                if sc > smax:
+                    migliore, smax = r, sc
+            if migliore is None:
+                righe.append({"anno": y, "nodo": None, "etichetta": "nessuna radice", "n": 0, "media_esc": None})
+                continue
+            scelto = self.procedura(migliore, mtr)
+            a = self._ann[scelto["id"]][anni == y][0]
+            tot += a
+            righe.append({"anno": y, "nodo": scelto["id"], "etichetta": scelto["etichetta"], "n": int(a[0]),
+                          "media_esc": _r(a[1] / a[0]) if a[0] else None})
+        return {"anni": righe, "n": int(tot[0]), "media_esc": _r(tot[1] / tot[0]) if tot[0] else None, "intera_ricerca": True}
 
     # -- L4
     def verifica(self, foglia: dict, wf: dict) -> dict:
@@ -643,6 +750,31 @@ class Albero:
                 "porte": porte, "passa_scoperta": mot is None, "motivo": mot, "_trade": tm}
 
 
+# ---------------------------------------------------------------- descrizioni
+
+NOMI_GRANDEZZE = {"dal_close_ieri": "dalla chiusura di ieri", "gap": "apertura su chiusura di ieri", "rsi": "RSI",
+                  "dal_massimo_seduta": "dal massimo di oggi", "dal_minimo_ieri": "dal minimo di ieri",
+                  "pos_chiusura_ieri": "chiusura di ieri nel suo intervallo", "dist_media": "distanza dalla media",
+                  "escursione_oggi": "escursione di oggi", "vol_relativa": "volatilità del periodo", "dal_1530": "dalle 15:30",
+                  "giorno_mese": "giorno del mese", "terzo_venerdi": "terzo venerdì", "dist_apertura": "dall'apertura"}
+
+
+def descrivi(regola: dict, barre: int) -> str:
+    """Nome leggibile di una regola: ora d'ingresso, condizioni, uscita."""
+    cond = " e ".join(f"{NOMI_GRANDEZZE.get(c[0].split(':')[0], c[0])} {c[1]} {c[2]:g}" for c in regola.get("cond", []))
+    u = regola.get("uscita") or {}
+    if u.get("barre") is not None:
+        usc = f"esce dopo {(int(u['barre']) + 2) * barre} min"
+    elif u.get("ora"):
+        usc = f"esce alle {u['ora']}"
+    elif u.get("giorni"):
+        usc = "esce il giorno dopo all'apertura" if int(u["giorni"]) == 1 else f"esce dopo {u['giorni']} giorni"
+    else:
+        usc = "uscita"
+    stop = f", stop {regola['stop']:g}" if regola.get("stop") else ""
+    return f"{regola.get('da', '')}{', ' + cond if cond else ''} → {usc}{stop}"
+
+
 # ---------------------------------------------------------------- file d'esperimento
 
 def carica(file) -> dict:
@@ -653,8 +785,22 @@ def controlla(file) -> dict:
     """Errori di forma del file e numero massimo di prove prevedibile."""
     e = carica(file)
     errori = [f"manca o è sbagliato '{k}'" for k, tp in OBBLIGATORI.items() if not isinstance(e.get(k), tp)]
-    if e.get("tipo") != "albero":
-        errori.append("tipo deve essere 'albero'")
+    if e.get("tipo") not in ("ricerca", "albero"):
+        errori.append("tipo deve essere 'ricerca'")
+    if not e.get("radici") and not e.get("ampiezza"):
+        errori.append("servono 'radici' o 'ampiezza'")
+    a = e.get("ampiezza")
+    n_amp = 0
+    if a:
+        if not isinstance(a.get("base"), dict) or not isinstance(a.get("griglia"), dict):
+            errori.append("ampiezza: servono 'base' e 'griglia'")
+        else:
+            n_amp = math.prod(len(v) for v in a["griglia"].values())
+            for cond in (c for v in a["griglia"].get("cond", []) for c in v):
+                try:
+                    condizioni.grandezza(cond[0], 1)
+                except (KeyError, ValueError):
+                    errori.append(f"ampiezza: grandezza sconosciuta {cond[0]}")
     for ip in e.get("ingressi", []):
         for k in ("nome", "meccanismo", "direzione", "grandezza", "op", "soglie"):
             if k not in ip:
@@ -669,8 +815,10 @@ def controlla(file) -> dict:
         errori.append(f"prodotto sconosciuto {e.get('prodotto')}")
     n_ip = sum(len(ip.get("soglie", [])) for ip in e.get("ingressi", []))
     rami = int(e.get("rami_per_livello", 3))
-    stima = len(e.get("radici", [])) * (1 + n_ip + rami * n_ip + int(e.get("foglie_per_radice", 3)) * (len(e.get("uscite", [])) + 1))
-    return {"file": str(file), "ok": not errori, "errori": errori, "prove_massime_stimate": stima, "budget": e.get("budget")}
+    n_rad = len(e.get("radici", [])) + (int(a.get("max_radici", 10)) if a else 0)
+    stima = n_amp + n_rad * (n_ip + rami * n_ip + int(e.get("foglie_per_radice", 3)) * (len(e.get("uscite", [])) + 1))
+    return {"file": str(file), "ok": not errori, "errori": errori, "prove_ampiezza": n_amp, "prove_massime_stimate": stima,
+            "budget": e.get("budget")}
 
 
 def _mini(ctx: Contesto, trade: pl.DataFrame, punti: int = 60) -> list:
@@ -720,27 +868,67 @@ def _curva_foglia(ctx: Contesto, ver: dict, holdout: pl.DataFrame | None) -> dic
             "segmenti": [[p, pos[a], pos[b]] for p, a, b in seg], "anni_wf": wf, "unita": "euro di oggi"}
 
 
+def _scrivi_stato(cart: Path, stato: dict) -> None:
+    tmp = cart / "stato.json.tmp"
+    tmp.write_text(json.dumps(stato, ensure_ascii=False), encoding="utf-8")
+    tmp.replace(cart / "stato.json")
+
+
+def imbuto(al: "Albero", foglie: list[dict]) -> list[dict]:
+    """Quante regole entrano e quante passano a ogni strato, per il diagramma del cruscotto."""
+    l0 = [n for n in al.nodi if n["livello"] == "L0"]
+    radici = [n for n in l0 if n.get("livello1")]
+    l2 = [n for n in al.nodi if n["livello"] == "L2"]
+    l3 = [n for n in al.nodi if n["livello"] == "L3"]
+    ver = [f for f in foglie if f["passa_scoperta"]]
+    return [
+        {"strato": "ampiezza", "nome": "Regole semplici provate", "n": len(l0)},
+        {"strato": "L0", "nome": "Guadagno o margine, non caso",
+         "n": sum(1 for n in l0 if n.get("scelta") or (not n.get("ampiezza") and n.get("livello1")))},
+        {"strato": "radici", "nome": "Radici scelte, diverse fra loro", "n": len(radici)},
+        {"strato": "L1", "nome": "Reggono gemello, metà del periodo, segnale isolato", "n": sum(n["esito"] != "scartato" for n in radici)},
+        {"strato": "L2", "nome": "Ingressi che battono il caso", "n": sum(n["esito"] != "scartato" for n in l2), "provati": len(l2)},
+        {"strato": "L3", "nome": "Uscite che migliorano", "n": sum(n["esito"] != "scartato" for n in l3), "provati": len(l3)},
+        {"strato": "L4", "nome": "Sistemi finali che passano la verifica", "n": len(ver), "provati": len(foglie)},
+        {"strato": "finale", "nome": "Passano 2024-2025 e il passato: da provare su ProRealTime", "n": sum(f["esito"] == "candidato" for f in foglie)},
+    ]
+
+
 def lancia(file, log=print) -> dict:
-    """Esegue l'albero, registra le prove, fa la prova finale una volta per albero sulle foglie che passano tutto e
-    scrive `risultati/alberi/<nome>/albero.json`. Un albero già lanciato non si rilancia."""
+    """Esegue la ricerca (ampiezza e profondità), registra le prove, fa la prova finale una volta sola sulle foglie che
+    passano tutto e scrive `risultati/ricerche/<nome>/ricerca.json`; durante il lavoro aggiorna `stato.json`.
+    Una ricerca già lanciata non si rilancia."""
     c = controlla(file)
     if not c["ok"]:
         raise ValueError("; ".join(c["errori"]))
     spec = carica(file)
     cart = CARTELLA / spec["nome"]
-    if (cart / "albero.json").exists():
-        raise ValueError(f"albero {spec['nome']} già lanciato: la prova finale si usa una volta sola (cambiare nome per un albero nuovo)")
+    if (cart / "ricerca.json").exists() or (cart / "albero.json").exists():
+        raise ValueError(f"ricerca {spec['nome']} già lanciata: la prova finale si usa una volta sola (cambiare nome per una ricerca nuova)")
     cart.mkdir(parents=True, exist_ok=True)
+    inizio = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    _scrivi_stato(cart, {"stato": "in corso", "inizio": inizio, "prove": 0, "budget": spec["budget"], "fase": "preparazione"})
     al = Albero(spec)
-    ris = al.esegui(log)
+    ultimo = [0.0]
+
+    def osserva(fatte, budget):
+        if time.time() - ultimo[0] > 2:
+            ultimo[0] = time.time()
+            _scrivi_stato(cart, {"stato": "in corso", "inizio": inizio, "prove": fatte, "budget": budget,
+                                 "fase": al.diario[-1]["testo"] if al.diario else "", "diario": al.diario})
+    al.osserva = osserva
+    try:
+        ris = al.esegui(log)
+    except Exception as ex:
+        _scrivi_stato(cart, {"stato": "fallita", "inizio": inizio, "errore": f"{type(ex).__name__}: {ex}", "diario": al.diario})
+        raise
     ctx = al.ctx
-    # registro: tutte le prove dell'albero in una famiglia
-    fam = f"albero:{spec['nome']}"
+    fam = f"ricerca:{spec['nome']}"
     prove = [({"nodo": n["id"], "regola": n["regola"]}, ctx.giornaliera(al.trade(n["id"]))) for n in al.nodi]
     ids = dict(zip([n["id"] for n in al.nodi], validazione.registra_molti(spec["nome"], fam, ctx.prodotto, prove, ctx.date)))
     for n in al.nodi:
         n["registro"] = ids[n["id"]]
-    # prova finale: una volta per albero, solo sulle foglie che passano la scoperta
+    al.nota("registro", f"{al.prove} prove scritte nel registro (contano per il DSR delle ricerche future)")
     foglie = []
     for v in ris["foglie"]:
         pf, hold = None, None
@@ -753,16 +941,22 @@ def lancia(file, log=print) -> dict:
         mot = v["motivo"] or (giudizio._motivo(voci_pf) if voci_pf else None)
         v["curva"] = _curva_foglia(ctx, v, hold)
         v.pop("_trade")
-        foglie.append({**v, "prova_finale": pf, "voci_prova_finale": voci_pf,
+        tr = uscita.traduci(v["regola"], ctx.prodotto, ctx.barre)
+        foglie.append({**v, "prova_finale": pf, "voci_prova_finale": voci_pf, "prorealcode": tr,
                        "esito": "candidato" if v["passa_scoperta"] and mot is None else "scartato",
                        "motivo": mot or "passa tutte le porte e la prova finale"})
+    n_pf = sum(f["prova_finale"] is not None for f in foglie)
+    al.nota("prova finale", f"prova finale (2024-2025, 2011-2013, prima del 2011) eseguita su {n_pf} sistemi; "
+                            f"{sum(f['esito'] == 'candidato' for f in foglie)} la passano", n_pf, sum(f["esito"] == "candidato" for f in foglie))
     for n in al.nodi:
         n["mini"] = _mini(ctx, al.trade(n["id"]))
-    out = {"intestazione": spec, "quando": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    out = {"intestazione": spec, "quando": inizio, "fine": datetime.now(timezone.utc).isoformat(timespec="seconds"),
            "prove": al.prove, "budget": al.budget, "budget_esaurito": al.esaurito, "durata_s": ris["durata_s"],
            "anni": list(SCOPERTA), "euro_per_escursione_oggi": _r(ctx.euro_esc, 2), "esc_oggi_punti": _r(ctx.esc_oggi, 1),
+           "imbuto": imbuto(al, foglie), "diario": al.diario, "walkforward_ricerca": al.wf_ricerca,
            "nodi": al.nodi, "livelli": al.livelli, "foglie": foglie}
-    (cart / "albero.json").write_text(json.dumps(metriche.pulisci(out), ensure_ascii=False, indent=1), encoding="utf-8")
+    (cart / "ricerca.json").write_text(json.dumps(metriche.pulisci(out), ensure_ascii=False, indent=1), encoding="utf-8")
+    _scrivi_stato(cart, {"stato": "finita", "inizio": inizio, "fine": out["fine"], "prove": al.prove, "budget": al.budget})
     return out
 
 

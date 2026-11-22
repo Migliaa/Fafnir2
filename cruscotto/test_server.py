@@ -61,39 +61,44 @@ def test_curva_con_i_due_holdout():
         server.CARTELLA_ESPERIMENTI = vero
 
 
-def test_alberi():
-    """Elenco e dettaglio di un albero finto in una cartella temporanea; nomi non ammessi rifiutati."""
-    vecchia = server.CARTELLA_ALBERI
-    server.CARTELLA_ALBERI = Path(tempfile.mkdtemp())
+def test_ricerche():
+    """Elenco e dettaglio di ricerche finte in una cartella temporanea: una finita, una in corso; nomi non ammessi rifiutati."""
+    vecchia = server.CARTELLA_RICERCHE
+    server.CARTELLA_RICERCHE = Path(tempfile.mkdtemp())
     try:
-        assert server.api_alberi() == []
-        d = server.CARTELLA_ALBERI / "prova"
+        assert all(r["formato"] == "esperimento" for r in server.api_ricerche())
+        d = server.CARTELLA_RICERCHE / "prova"
         d.mkdir()
-        nodi = [{"id": "n001", "livello": "L0", "esito": "passa"}, {"id": "n002", "livello": "L0", "esito": "scartato"},
+        nodi = [{"id": "n001", "livello": "L0", "esito": "passa", "livello1": True}, {"id": "n002", "livello": "L0", "esito": "scartato"},
                 {"id": "n003", "livello": "L2", "esito": "pronto"}]
         foglie = [{"id": "n003", "esito": "candidato"}, {"id": "n001", "esito": "scartato"}]
-        (d / "albero.json").write_text(json.dumps({"intestazione": {"prodotto": "FDAX", "barre": 5}, "quando": "2026-11-22T10:00:00",
-                                                   "prove": 3, "budget": 200, "nodi": nodi, "foglie": foglie}), encoding="utf-8")
-        (server.CARTELLA_ALBERI / "vuota").mkdir()                     # cartella senza albero.json: ignorata
-        l = server.api_alberi()
-        assert l == [{"nome": "prova", "prodotto": "FDAX", "barre": 5, "quando": "2026-11-22T10:00:00", "prove": 3, "budget": 200,
-                      "radici": 2, "radici_vive": 1, "foglie": 2, "candidati": 1}], l
-        a = server.api_albero("prova")
-        assert a["nodi"] == nodi and a["soglie_guadagno"][-1] == [None, 50.0]
+        (d / "ricerca.json").write_text(json.dumps({"intestazione": {"prodotto": "FDAX", "barre": 5, "ipotesi": "x"}, "quando": "2099-01-01T10:00:00",
+                                                   "prove": 3, "budget": 200, "imbuto": [{"strato": "ampiezza", "n": 2}], "nodi": nodi, "foglie": foglie}), encoding="utf-8")
+        c = server.CARTELLA_RICERCHE / "corre"
+        c.mkdir()
+        (c / "stato.json").write_text(json.dumps({"stato": "in corso", "inizio": "2099-01-02T10:00:00", "prove": 40, "budget": 200, "fase": "ampiezza"}), encoding="utf-8")
+        (server.CARTELLA_RICERCHE / "vuota").mkdir()                   # cartella senza file: ignorata
+        l = server.api_ricerche()
+        assert [r["nome"] for r in l[:2]] == ["corre", "prova"], l          # dalla più recente
+        p = l[1]
+        assert (p["ampiezza"], p["radici"], p["finali"], p["candidati"], p["prove"]) == (2, 1, 2, 1, 3), p
+        assert l[0]["stato"] == "in corso" and l[0]["prove"] == 40
+        assert server.api_ricerca("prova")["nodi"] == nodi and server.api_ricerca("corre")["in_corso"]
         for cattivo in ("../prova", "vuota", "nessuno"):
             try:
-                server.api_albero(cattivo)
+                server.api_ricerca(cattivo)
             except server.NonTrovato:
                 pass
             else:
                 raise AssertionError(cattivo)
+        assert server.api_versione()["commit"]
     finally:
-        server.CARTELLA_ALBERI = vecchia
+        server.CARTELLA_RICERCHE = vecchia
 
 
 def main():
     test_curva_con_i_due_holdout()
-    test_alberi()
+    test_ricerche()
     tmp = Path(tempfile.mkdtemp())
     server.DECISIONI = tmp / "cruscotto" / "decisioni.json"
     srv = server.crea_server(0)

@@ -8,6 +8,7 @@ import json
 import math
 import mimetypes
 import re
+import subprocess
 import threading
 import webbrowser
 from datetime import datetime, timezone
@@ -27,7 +28,7 @@ STATIC = Path(__file__).resolve().parent / "static"
 CARTELLA_ESPERIMENTI = RISULTATI / "esperimenti"       # risultati dei lanci
 DEFINIZIONI = RADICE / "esperimenti"                   # file d'esperimento e resoconti
 DECISIONI = RISULTATI / "cruscotto" / "decisioni.json"
-CARTELLA_ALBERI = RISULTATI / "alberi"                 # risultati di `motore.albero lancia`
+CARTELLA_RICERCHE = RISULTATI / "ricerche"             # risultati di `motore.albero lancia`
 STATI = ["da guardare", "da approfondire", "in verifica", "live", "scartato"]
 ESITI_VERIFICA = ["", "confermata", "non confermata", "inconcludente"]
 NOME = re.compile(r"^[A-Za-z0-9_.-]+$")
@@ -281,32 +282,70 @@ def api_sistema(nome: str, id_: str) -> dict:
             "commento_ia": _commento(nome, id_), "decisione": _decisione(_decisioni(), nome, id_)}
 
 
-def api_alberi() -> list[dict]:
+def _stato_ricerca(d: Path) -> dict | None:
+    f = d / "stato.json"
+    return _json(f) if f.exists() else None
+
+
+def api_ricerche() -> list[dict]:
+    """Tutte le ricerche, dalla più recente: quelle nuove (ampiezza e profondità, anche in corso) e quelle del
+    formato precedente (solo ampiezza, `risultati/esperimenti`)."""
     out = []
-    if not CARTELLA_ALBERI.exists():
-        return out
-    for d in sorted(CARTELLA_ALBERI.iterdir()):
-        f = d / "albero.json"
-        if not f.exists():
-            continue
-        a = _json(f)
-        radici = [n for n in a["nodi"] if n["livello"] == "L0"]
-        out.append({"nome": d.name, "prodotto": a["intestazione"]["prodotto"], "barre": a["intestazione"]["barre"],
-                    "quando": a["quando"], "prove": a["prove"], "budget": a["budget"], "radici": len(radici),
-                    "radici_vive": sum(n["esito"] != "scartato" for n in radici), "foglie": len(a["foglie"]),
-                    "candidati": sum(x["esito"] == "candidato" for x in a["foglie"])})
-    return out
+    if CARTELLA_RICERCHE.exists():
+        for d in CARTELLA_RICERCHE.iterdir():
+            f, st = d / "ricerca.json", _stato_ricerca(d)
+            if f.exists():
+                a = _json(f)
+                imb = a.get("imbuto") or []
+                out.append({"nome": d.name, "formato": "ricerca", "stato": "finita", "prodotto": a["intestazione"]["prodotto"],
+                            "barre": a["intestazione"]["barre"], "quando": a["quando"], "prove": a["prove"], "budget": a["budget"],
+                            "ampiezza": imb[0]["n"] if imb else None, "radici": sum(1 for n in a["nodi"] if n.get("livello1")),
+                            "finali": len(a["foglie"]), "candidati": sum(x["esito"] == "candidato" for x in a["foglie"]),
+                            "ipotesi": a["intestazione"].get("ipotesi")})
+            elif st:
+                out.append({"nome": d.name, "formato": "ricerca", "stato": st.get("stato"), "quando": st.get("inizio"),
+                            "prove": st.get("prove"), "budget": st.get("budget"), "fase": st.get("fase"), "errore": st.get("errore")})
+    for nome in _nomi_esperimenti():
+        r = _riassunto(nome)
+        ih = r["intestazione"]
+        out.append({"nome": nome, "formato": "esperimento", "stato": "finita", "prodotto": ", ".join(ih["prodotti"]), "barre": ih["barre"],
+                    "quando": ih.get("quando") or "", "prove": r["prove"]["questa"], "budget": None, "ampiezza": r["prove"]["questa"],
+                    "radici": None, "finali": len(r["candidati"]), "candidati": sum(c.get("esito") == "candidato" for c in r["candidati"]),
+                    "ipotesi": ih.get("ipotesi")})
+    return sorted(out, key=lambda x: x.get("quando") or "", reverse=True)
 
 
-def api_albero(nome: str) -> dict:
+def api_ricerca(nome: str) -> dict:
     if not NOME.match(nome):
         raise NonTrovato(nome)
-    f = CARTELLA_ALBERI / nome / "albero.json"
+    d = CARTELLA_RICERCHE / nome
+    f = d / "ricerca.json"
     if not f.exists():
-        raise NonTrovato(nome)
+        st = _stato_ricerca(d)
+        if st is None:
+            raise NonTrovato(nome)
+        return {"nome": nome, "in_corso": True, **st}
     a = _json(f)
+    a["nome"] = nome
     a["soglie_guadagno"] = [[None if math.isinf(x) else x, e] for x, e in giudizio.SOGLIE_GUADAGNO]
     return a
+
+
+_VERSIONE: dict = {}
+
+
+def api_versione() -> dict:
+    """Ultima modifica del software (commit git), per sapere quale versione sta girando."""
+    if not _VERSIONE:
+        try:
+            out = subprocess.run(["git", "log", "-1", "--format=%h|%cI|%s"], cwd=RADICE, capture_output=True, text=True,
+                                 timeout=5, encoding="utf-8").stdout.strip()
+            h, quando, titolo = out.split("|", 2)
+            _VERSIONE.update({"commit": h, "quando": quando, "titolo": titolo})
+        except (OSError, ValueError, subprocess.SubprocessError):
+            _VERSIONE.update({"commit": None, "quando": None, "titolo": None})
+        _VERSIONE["avviato"] = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return _VERSIONE
 
 
 def api_registro(famiglia: str | None) -> dict:
@@ -431,10 +470,12 @@ class Gestore(BaseHTTPRequestHandler):
             return api_sistemi()
         if len(p) == 3 and p[0] == "sistemi":
             return api_sistema(p[1], p[2])
-        if p == ["alberi"]:
-            return api_alberi()
-        if len(p) == 2 and p[0] == "alberi":
-            return api_albero(p[1])
+        if p == ["ricerche"]:
+            return api_ricerche()
+        if len(p) == 2 and p[0] == "ricerche":
+            return api_ricerca(p[1])
+        if p == ["versione"]:
+            return api_versione()
         if p == ["registro"]:
             return api_registro((q.get("famiglia") or [None])[0])
         raise NonTrovato("/".join(["api", *p]))

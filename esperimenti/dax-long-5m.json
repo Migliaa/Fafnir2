@@ -1,0 +1,58 @@
+{
+ "tipo": "ricerca",
+ "nome": "dax-long-5m",
+ "ipotesi": "Esistono momenti della giornata in cui il DAX tende a salire, da soli o dopo un movimento preciso (giornata in rialzo, ribasso da recuperare, apertura in gap, chiusura forte di ieri); si cercano in ampiezza e si approfondiscono i migliori.",
+ "meccanismo": "Flussi ricorrenti nella giornata: apertura Xetra e americana, coperture delle opzioni verso la chiusura, ritorno verso la media dopo eccessi, continuazione dopo una chiusura forte.",
+ "fonte": "studi accademici sul momento intraday (Gao et al. 2018; Baltussen et al. 2021) e sul ritorno verso la media a breve; sistemi di Andrea su FDAX (165, 3251)",
+ "prodotto": "FDAX",
+ "gemello": "FESX",
+ "barre": 5,
+ "budget": 1500,
+ "prove_pregresse": 27,
+ "max_condizioni": 2,
+ "rami_per_livello": 3,
+ "foglie_per_radice": 2,
+ "ampiezza": {
+  "max_radici": 10,
+  "correlazione_max": 0.7,
+  "base": {"lato": 1, "da": "09:00", "a": "09:00", "cond": [], "uscita": {"barre": 4}, "max_al_giorno": 1},
+  "griglia": {
+   "ingresso": ["09:00", "09:30", "10:00", "11:00", "12:00", "13:00", "14:00", "15:00", "15:30", "16:00", "16:30", "17:00", "17:30", "18:00", "20:00"],
+   "cond": [
+    [],
+    [["dal_close_ieri", ">=", 0]],
+    [["dal_close_ieri", ">=", 0.5]],
+    [["dal_close_ieri", "<=", -0.5]],
+    [["gap", ">=", 0.25]],
+    [["gap", "<=", -0.25]],
+    [["dal_massimo_seduta", "<=", -0.5]],
+    [["pos_chiusura_ieri", ">=", 0.7]],
+    [["rsi:2", "<=", 10]]
+   ],
+   "uscita": [{"barre": 4}, {"barre": 22}, {"ora": "21:55"}, {"giorni": 1}]
+  }
+ },
+ "ingressi": [
+  {"nome": "giornata ampia", "grandezza": "escursione_oggi", "op": ">=", "soglie": [0.6, 1.0],
+   "meccanismo": "chi copre opzioni e chi segue il trend muove di più nei giorni già mossi, e il guadagno in euro scala con l'escursione", "direzione": "giornata ampia aiuta"},
+  {"nome": "volatilità del periodo alta", "grandezza": "vol_relativa", "op": ">=", "soglie": [1.0, 1.2],
+   "meccanismo": "escursione media di 20 giorni sopra quella di 100 (al posto del VIX): nei periodi agitati gli effetti intraday sono più forti", "direzione": "volatilità alta aiuta"},
+  {"nome": "giorno in rialzo", "grandezza": "dal_close_ieri", "op": ">=", "soglie": [0, 0.25],
+   "meccanismo": "momento intraday: il movimento della giornata tende a continuare", "direzione": "rialzo aiuta il long"},
+  {"nome": "chiusura forte ieri", "grandezza": "pos_chiusura_ieri", "op": ">=", "soglie": [0.5, 0.7],
+   "meccanismo": "una chiusura vicina al massimo segnala compratori ancora presenti il giorno dopo", "direzione": "chiusura forte aiuta"},
+  {"nome": "sopra il minimo di ieri", "grandezza": "dal_minimo_ieri", "op": ">=", "soglie": [0],
+   "meccanismo": "finché il prezzo resta sopra il minimo di ieri la struttura rialzista non è rotta (filtro del 3251)", "direzione": "sopra il minimo aiuta"},
+  {"nome": "conferma americana", "grandezza": "dal_1530", "op": ">=", "soglie": [0, 0.2],
+   "meccanismo": "se il DAX sale anche dall'apertura di Wall Street il movimento è globale (al posto dell'S&P)", "direzione": "rialzo dalle 15:30 aiuta"},
+  {"nome": "fine mese", "grandezza": "giorno_mese", "op": ">=", "soglie": [24],
+   "meccanismo": "ribilanciamenti e flussi di fine periodo dei fondi", "direzione": "fine mese aiuta"}
+ ],
+ "uscite": [
+  {"nome": "esce dopo 1 ora", "uscita": {"barre": 10}},
+  {"nome": "esce alle 17:30", "uscita": {"ora": "17:30"}},
+  {"nome": "esce alle 21:55", "uscita": {"ora": "21:55"}},
+  {"nome": "esce il giorno dopo all'apertura", "uscita": {"giorni": 1}},
+  {"nome": "stop 0,5 escursioni", "stop": 0.5}
+ ]
+}

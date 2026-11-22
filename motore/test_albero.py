@@ -167,7 +167,7 @@ SPEC = {"tipo": "albero", "nome": "prova-albero", "ipotesi": "rialzo fra le 09 e
 
 def test_lancio_rispetta_il_budget_registra_e_non_si_ripete():
     with _Ambiente() as tmp:
-        A.CARTELLA = tmp / "alberi"
+        A.CARTELLA = tmp / "ricerche"
         vecchi = (A.M_MIN, A.D2_QUOTA_LORDO, A.SCOPERTA)
         A.M_MIN, A.D2_QUOTA_LORDO = 0.0, -1e9            # dati finti: tre anni (2014-2016), vantaggio piccolo
         A.SCOPERTA = (2014, 2016)
@@ -178,20 +178,49 @@ def test_lancio_rispetta_il_budget_registra_e_non_si_ripete():
             r = A.lancia(f, log=lambda *a: None)
             assert r["prove"] <= 6 and r["budget_esaurito"], (r["prove"], r["budget_esaurito"])
             assert len(r["nodi"]) == r["prove"]
-            fam = [x for x in validazione._righe() if x["famiglia"] == "albero:prova-albero"]
+            fam = [x for x in validazione._righe() if x["famiglia"] == "ricerca:prova-albero"]
             assert len(fam) == r["prove"]
-            salvato = json.loads((tmp / "alberi" / "prova-albero" / "albero.json").read_text(encoding="utf-8"))
+            salvato = json.loads((tmp / "ricerche" / "prova-albero" / "ricerca.json").read_text(encoding="utf-8"))
             assert salvato["nodi"][0]["livello"] == "L0" and all(n["registro"] for n in salvato["nodi"])
+            assert salvato["imbuto"][0]["n"] == 1 and salvato["diario"] and                 json.loads((tmp / "ricerche" / "prova-albero" / "stato.json").read_text(encoding="utf-8"))["stato"] == "finita"
             try:
                 A.lancia(f, log=lambda *a: None)
             except ValueError as ex:
-                assert "già lanciato" in str(ex)
+                assert "già lanciata" in str(ex)
             else:
                 raise AssertionError("albero rilanciato")
             bad = dict(SPEC, tipo="esperimento", ingressi=[{"nome": "x", "grandezza": "boh", "op": ">", "soglie": [1]}])
             f.write_text(json.dumps(bad), encoding="utf-8")
             r = A.controlla(f)
             assert not r["ok"] and any("tipo" in e for e in r["errori"]) and any("boh" in e for e in r["errori"]), r
+            f.write_text(json.dumps({k: v for k, v in SPEC.items() if k != "radici"}), encoding="utf-8")
+            assert any("radici" in e for e in A.controlla(f)["errori"])
+        finally:
+            A.M_MIN, A.D2_QUOTA_LORDO, A.SCOPERTA = vecchi
+
+
+def test_ampiezza_sceglie_radici_diverse():
+    """Griglia su dati finti: due regole identiche (stessa condizione scritta due volte) danno una radice sola; il
+    numero di radici non supera `max_radici`; ogni regola dell'ampiezza è una prova."""
+    with _Ambiente() as tmp:
+        A.CARTELLA = tmp / "ricerche"
+        vecchi = (A.M_MIN, A.D2_QUOTA_LORDO, A.SCOPERTA)
+        A.M_MIN, A.D2_QUOTA_LORDO, A.SCOPERTA = 0.0, -1e9, (2014, 2016)
+        try:
+            spec = {**{k: v for k, v in SPEC.items() if k != "radici"}, "budget": 200, "max_condizioni": 0, "foglie_per_radice": 1, "uscite": [],
+                    "ampiezza": {"max_radici": 2, "correlazione_max": 0.7,
+                                 "base": {"lato": 1, "da": "09:00", "a": "09:00", "cond": [], "uscita": {"barre": 0}, "max_al_giorno": 1},
+                                 "griglia": {"ingresso": ["09:00", "09:00", "13:00", "14:00", "16:00"], "cond": [[]]}}}
+            al = A.Albero(spec)
+            scelte = al.ampiezza(log=lambda *a: None)
+            l0 = [n for n in al.nodi if n["livello"] == "L0"]
+            assert len(l0) == 5 == al.prove
+            assert l0[0]["etichetta"] == "09:00 → esce dopo 120 min", l0[0]["etichetta"]
+            assert len(scelte) <= 2
+            doppioni = [n for n in l0[:2]]
+            assert sum(n.get("scelta") == "radice" for n in doppioni) <= 1                # lo stesso sistema non è scelto due volte
+            if doppioni[0].get("scelta") == "radice":
+                assert doppioni[1]["scelta"].startswith("simile a"), doppioni[1]
         finally:
             A.M_MIN, A.D2_QUOTA_LORDO, A.SCOPERTA = vecchi
 

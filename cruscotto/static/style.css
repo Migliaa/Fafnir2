@@ -127,3 +127,35 @@ table.albero tr.nota-livello td { font-size: 12px; padding-top: 2px; padding-bot
 .dett-nodo { padding: 6px 4px 10px; display: grid; gap: 8px; }
 table.porte td { padding: 2px 8px; border: 0; }
 .foglia { border-top: 1px solid var(--bordo); padding-top: 12px; margin-top: 16px; }
+
+/* ricerche */
+.imbuto-svg { width: 100%; max-width: 760px; display: block; margin: 8px 0; }
+.grande-esito { font-size: 18px; font-weight: 600; margin: 0 0 6px; }
+.grande-esito .muto { font-size: 14px; font-weight: 400; }
+ol.diario { padding-left: 20px; } ol.diario li { margin: 4px 0; }
+pre.codice { max-height: 420px; overflow: auto; background: var(--pannello); border: 1px solid var(--bordo); border-radius: 8px; padding: 10px; font-size: 12px; }
+.versione { font-size: 11px; margin-top: auto; padding: 8px 4px; }
+/* come funziona */
+.cf-percorso { display: flex; flex-wrap: wrap; align-items: stretch; gap: 6px; margin: 12px 0; }
+.cf-percorso .freccia { align-self: center; color: var(--muto); }
+.cf-percorso button { display: flex; flex-direction: column; align-items: flex-start; gap: 2px; padding: 8px 10px; border-radius: 8px; border: 1px solid var(--bordo);
+  background: var(--pannello); color: var(--testo); cursor: pointer; min-width: 104px; text-align: left; }
+.cf-percorso button span { font-size: 11px; color: var(--muto); }
+.cf-percorso button em { font-style: normal; font-weight: 700; font-size: 15px; color: var(--f-in); }
+.cf-percorso button.sel { border-color: var(--f-in); box-shadow: 0 0 0 1px var(--f-in) inset; }
+.cf-pannello { display: grid; grid-template-columns: minmax(0, 380px) minmax(0, 1fr); gap: 18px; background: var(--pannello); border: 1px solid var(--bordo); border-radius: 10px; padding: 14px; }
+.cf-pannello h3 { margin: 0 0 6px; } .cf-pannello ul { margin: 4px 0 8px; padding-left: 18px; } .cf-pannello .et { font-weight: 600; margin-top: 6px; }
+.cf-numero { border-top: 1px solid var(--bordo); padding-top: 8px; }
+svg.disegno { width: 100%; height: auto; display: block; }
+.cf-periodi { display: flex; gap: 6px; flex-wrap: wrap; }
+.cf-periodi > div { min-width: 110px; font-size: 13px; }
+.cf-blocco { color: #000; font-weight: 700; padding: 10px 8px; border-radius: 6px; margin-bottom: 6px; opacity: .85; }
+.cf-riga { display: grid; grid-template-columns: 1fr 1fr; gap: 24px; margin-top: 16px; }
+.cf-cpcv { display: flex; gap: 4px; flex-wrap: wrap; }
+.cf-cpcv span { padding: 6px 8px; border-radius: 4px; background: var(--f-in); color: #000; font-size: 12px; opacity: .8; transition: background .4s; }
+.cf-cpcv span.test { background: var(--f-wf); opacity: 1; }
+@media (max-width: 760px) { .cf-pannello, .cf-riga { grid-template-columns: 1fr; } }
+#menu #tema { margin-top: 4px; }
+td.desc { white-space: normal; min-width: 240px; max-width: 460px; }
+.imbuto-riga { display: flex; flex-wrap: wrap; gap: 18px; align-items: flex-start; } .imbuto-riga svg { flex: 2 1 480px; } .imbuto-riga > div { flex: 1 1 220px; }
+ul.perche { padding-left: 18px; margin: 4px 0; } ul.perche li { margin: 4px 0; }

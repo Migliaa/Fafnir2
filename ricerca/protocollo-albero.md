@@ -92,7 +92,7 @@ Andrea (2026-11-22) ha spostato l'in-sample a **2014-2023**: il mercato cambia, 
 
 ## Il primo albero: momento verso la chiusura del DAX
 
-Radici: c01 (giorno in rialzo, 17:00 → 21:55), c03 (rialzo ≥ 0,25 escursioni, → 21:55), c02 (→ 17:30). Ipotesi di L2, con il meccanismo, in `esperimenti/alberi/dax-momento-chiusura.json`:
+Radici: c01 (giorno in rialzo, 17:00 → 21:55), c03 (rialzo ≥ 0,25 escursioni, → 21:55), c02 (→ 17:30). Ipotesi di L2, con il meccanismo, in `esperimenti/dax-momento-chiusura.json`:
 1. **Giornata ampia** (escursione di oggi rispetto alla media): le coperture del gamma muovono di più quando il mercato si muove di più, e il guadagno in euro scala con l'escursione.
 2. **Volatilità del periodo alta**: Baltussen et al. 2021 trovano l'effetto più forte nei giorni di gamma negativo.
 3. **Scadenza delle opzioni** (terzo venerdì del mese): i flussi di copertura sono massimi.
@@ -111,10 +111,26 @@ Le ipotesi 2 e 4 nel progetto usavano il VIX e l'S&P. Una strategia ProRealTime 
 
 Per c01 il guadagno a trade in euro di oggi (3,8 €) è più basso di quello storico sugli stessi anni (4,1 €): il sistema ha guadagnato soprattutto nel 2020 e nel 2022, quando l'escursione media era di 295 punti contro i 190 del 2023. Un collaudo con le porte allentate (gemello tolto, margine 1, non registrato) mostra che c01 non migliora comunque: nessuna delle 11 condizioni batte il 95% dei filtri casuali (la migliore, conferma americana ≥ 0,2, arriva al 93% e 7,4 € a trade).
 
+## Ricerca unica: ampiezza e profondità (2026-11-22, richiesta di Andrea)
+
+Esperimento e albero sono la stessa cosa: una **ricerca** (`esperimenti/<nome>.json`, `"tipo": "ricerca"`) parte da una griglia di regole semplici (`ampiezza`: ora d'ingresso × condizione × uscita), le passa tutte al primo setaccio (L0), sceglie fino a 10 radici in ordine di punteggio saltando quelle con risultati giornalieri correlati oltre 0,7 a una già scelta, e su queste esegue L1-L4. Il walk-forward rifà l'intera ricerca anno per anno: con i soli anni precedenti sceglie la radice migliore (stesso punteggio, calcolato su quegli anni) e poi ripete le scelte dell'albero su di essa.
+
+### Prima ricerca completa: DAX 5 minuti long (`esperimenti/dax-long-5m.json`)
+
+Griglia di 540 regole: 15 ore d'ingresso (09:00-20:00) × 9 condizioni (nessuna, giorno in rialzo ≥ 0 e ≥ 0,5, in ribasso ≤ −0,5, gap ≥ 0,25 e ≤ −0,25, ribasso dal massimo di oggi, chiusura forte ieri, RSI a 2 barre ≤ 10) × 4 uscite (30 minuti, 2 ore, 21:55, giorno dopo all'apertura). 540 prove in 11 secondi.
+
+| Strato | Passano | Perché si fermano gli altri |
+|---|---|---|
+| regole provate | 540 | |
+| primo setaccio | 1 | 535 guadagnano troppo poco a trade anche tenendo solo i 12 migliori dell'anno; 4 hanno margine ma t sotto 2 |
+| controllo della radice | 0 | l'unica, 17:00 in giorno di rialzo → 21:55 (cioè c01), perde sull'Euro Stoxx |
+
+La regola semplice migliore guadagna 3,8 € a trade (volatilità del 2023), la più alta fra quelle con almeno 6 trade l'anno è 11 € a trade (24 l'anno, entrata alle 10:00 dopo un rialzo di mezza escursione, uscita alle 21:55) con t 1,5. Il DAX long intraday a 5 minuti, con regole semplici e uscita entro il giorno dopo, non contiene niente che si avvicini a 20 € a trade con 1 CFD. Il prossimo passo naturale, da decidere con Andrea, è allargare le uscite a più giorni (le soglie di 30 e 50 € esistono per quello) oppure passare a un altro prodotto.
+
 ## Nel software
 
-- `motore/albero.py`: `python -m motore.albero controlla|lancia <file>`; risultati in `risultati/alberi/<nome>/albero.json`; un albero già lanciato non si rilancia (la prova finale si usa una volta). Test in `motore/test_albero.py`.
+- `motore/albero.py`: `python -m motore.albero controlla|lancia <file>`; risultati in `risultati/ricerche/<nome>/ricerca.json`, avanzamento in `stato.json`, diario dei passi nel risultato; una ricerca già lanciata non si rilancia (la prova finale si usa una volta). Test in `motore/test_albero.py`.
 - Condizioni nuove in `motore/condizioni.py`, tradotte in ProRealCode da `motore/uscita.py`: `vol_relativa`, `dal_1530`, `terzo_venerdi`, `giorno_mese`.
 - Prova finale a tre periodi e regola del disastroso: `motore/prova_finale.py`, `motore/giudizio.py`.
-- Cruscotto: pagina **Alberi** con i rami (mini-curva, euro di oggi, G, trade l'anno, t, R², drawdown, segnale isolato, prima porta non superata; clic per tutte le porte) e le foglie verificate (curva quadrata con il riferimento D2 tratteggiato, anni del walk-forward, sette numeri).
+- Cruscotto (Fafnir2): pagina **Ricerche** con lo storico (anche quelle in corso e quelle del formato precedente), imbuto per strato, i motivi di scarto più frequenti, solo i sistemi da provare su ProRealTime con il codice; pagina **Come funziona** con un disegno per strato; le pagine Sistemi ed Esperimenti sono tolte. Nella pagina della ricerca, i rami (mini-curva, euro di oggi, G, trade l'anno, t, R², drawdown, segnale isolato, prima porta non superata; clic per tutte le porte) e le foglie verificate (curva quadrata con il riferimento D2 tratteggiato, anni del walk-forward, sette numeri).
 - Limite dichiarato del walk-forward: la procedura rifatta anno per anno sceglie solo fra i nodi già valutati sul periodo intero; un ramo che l'albero non ha approfondito non entra nella scelta.
